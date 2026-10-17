@@ -1,73 +1,72 @@
 # Porting Plan: 9Router → Blackhand (Go + Svelte)
 
-## Goals
-1. Prioritize performance and operator ergonomics.
-2. Serve API and compiled Svelte SPA from one production executable.
-3. Preserve external API contracts, environment/configuration semantics, key behavior, and database compatibility where required.
-4. Start with OpenCode Free only, under model prefix `oc/`.
-5. Back compatibility claims with tests.
+## Goal and boundary
 
-## Initial feature scope
+Port the requested management/runtime areas while keeping OpenCode Free as the only initial provider:
+
 - Endpoint & Key
-- Providers: OpenCode Free (`oc/`) only
+- Providers: OpenCode Free only, public model prefix `oc/`
 - Usage
 - Token Saver
 - Console Log
-- Setting
+- Settings
 - Proxypools
 
-This repository begins as a scaffold. Port completion requires route-by-route, database, token-saver, and streaming parity tests against the selected 9Router source revision.
+The branch is a feature port, not a promise of 1:1 parity or production readiness. Compatibility claims should be backed by tests against a pinned upstream 9Router revision and representative database copies.
+
+## Current status
+
+| Area | Status | Implemented | Remaining gap |
+|---|---|---|---|
+| Runtime / packaging | Implemented baseline | Go `net/http`, readiness/liveness, graceful shutdown, embedded Svelte SPA, one-binary smoke test | OS/architecture release matrix, load and lifecycle tests |
+| Endpoint & Key | Partial | Key CRUD, environment key reconciliation, active flag, per-key model allow-list, `/v1/models`, `/v1/chat/completions` | Full endpoint parity, more malformed-input and concurrent-key tests, comparison against existing installations |
+| OpenCode Free | Partial | Dynamic model discovery with TTL cache, `oc/` prefix normalization, streaming pass-through, client cancellation propagation, optional outbound proxy | No OAuth/account management or other providers; audit upstream errors/retries and stream disconnect semantics |
+| Settings | Partial | Persisted JSON settings, defaults, unknown-key preservation, password update | Password login only; OIDC/SAML values are stored but their login flows are not implemented; some settings are placeholders |
+| Usage | Implemented baseline | Request persistence, daily rollups, one-time rollup backfill when needed, chart/recent queries, 24-hour range query, masked API-key reporting | Exact cost/account aggregation parity, historical fixture comparisons, retention/export, usage write/stream stress tests |
+| Token Saver | Partial | A subset of RTK output compaction, optional Headroom call with timeouts/fail-open circuit, Caveman/Ponytail prompts | Not a full port of the upstream RTK filter set or exact prompts/order; PXPipe is deliberately skipped; Headroom deployment/bootstrap is external |
+| Console Log | Partial | Bounded in-memory buffer, server/request events, SSE, clear/reconnect behavior | No persistence, complete translator/provider events, or exact UI parity |
+| Proxypools | Partial | CRUD, status test, active/strict options, no-proxy matching, standard HTTP(S) transport, Vercel/Cloudflare/Deno/Netlify relay headers | Relay deployment automation, per-provider-connection selection/rotation, all upstream edge cases and strict/no-proxy fixtures |
+| SQLite compatibility | Partial | Core table names/columns compatible with the selected 9Router schema, pre-repair backup, selected legacy Blackhand data imports | A complete audit of every upstream migration and a restore test against representative 9Router databases |
 
 ## Architecture
-- Go `net/http`; isolate API, provider, token processing, storage, usage, and logging.
-- Svelte + Vite SPA, with lazy route/page loading.
-- Go `embed.FS` bundles `web/dist` into the release executable; Node/npm are build-time only.
-- SQLite via `database/sql` and an initially pure-Go driver. Benchmark the actual workload before treating the SQLite driver as final.
-- Runtime database, backup, and logs remain external under `DATA_DIR`.
-- Context cancellation, bounded buffers, upstream timeouts, graceful shutdown, and streaming correctness are mandatory.
 
-## Compatibility matrix
+- Go HTTP server is the runtime and serves API plus the embedded SPA.
+- Svelte + Vite is build-time UI tooling; Node.js is not needed at runtime.
+- SQLite via `database/sql` and a pure-Go driver.
+- All mutable data and backups stay outside the executable under `DATA_DIR`.
+- Streaming requests do not use a global write timeout; upstream requests are bounded and follow client cancellation.
+- Usage statistics use calendar-day rollups for calendar-day ranges; the rolling 24-hour aggregate remains a timestamp-bounded history query. The recent-request and last-10-minute queries are bounded.
+- Timestamps written by Go are normalized to fixed UTC millisecond ISO strings to keep SQLite text-range comparisons consistent with the upstream JavaScript `toISOString()` format.
+- API-key values must not appear in logs or statistics response metadata. Dashboard key-management responses remain authenticated and intentionally show managed key values.
 
-| Area | Preserve | Safe improvements after tests |
-|---|---|---|
-| Endpoint & Key | Public routes, auth modes, key status, access restrictions, request/response shapes | True readiness after storage init; uniform errors; safe key comparison |
-| OpenCode Free | `oc/` model prefix, upstream IDs, discovery and request semantics | TTL cache and stale-if-error; never retry after stream bytes have started |
-| Usage | Provider/model/status/token/cost/time fields and historical aggregation | Batch telemetry where safe, bounded live event fan-out |
-| Token Saver | Existing algorithm semantics, order, defaults, toggles and bypasses | Modular pipeline, measured performance, fixture-based regression tests |
-| Console Log | Existing relevant events and dashboard display | SSE, bounded ring buffer, backpressure, secret redaction |
-| Setting | Keys, value types, defaults, environment precedence and persisted values | Atomic updates, preserve unknown settings |
-| Proxypools | CRUD fields, URL/type/noProxy/active/strict/test semantics | Explicit test timeout; strict mode cannot silently fall back to direct networking |
+## Compatibility rules
 
-## Engineering rules
-- Maintain `/v1/models` and `/v1/chat/completions` contracts.
-- Forward SSE incrementally, not by buffering an entire generation.
-- Cancel upstream requests when clients disconnect.
-- Never retry a stream after response bytes have been emitted.
-- Bound request size and upstream operations.
-- Treat dynamic model discovery separately from persisted provider connections.
-- Liveness only means the process is running; readiness requires successful config/storage initialization.
-- Back up an existing 9Router database before touching it. Never drop or rewrite unrelated rows because some providers are outside current scope.
-- Token Saver must first have fixtures captured from original implementation. On timeout/error, fail-open only where that matches source behavior.
-- Logs must redact API keys and OAuth tokens. Full request dumps, if added, must be opt-in with bounded retention.
-- Runtime data and backups stay outside executable.
+1. Keep `/v1/models` and `/v1/chat/completions` response behavior compatible where implemented.
+2. Forward SSE incrementally. Never retry after response bytes have reached the client.
+3. Bound request bodies, upstream response sizes, timeouts and in-memory log buffers.
+4. When a proxy pool is marked strict, do not silently retry directly after the standard proxy transport fails.
+5. Back up an existing SQLite database before schema repair. Do not drop unrelated tables/rows because provider areas are out of scope.
+6. Keep credentials out of logs and dashboard statistics. Reject or fail closed when a restricted API key's allow-list is corrupt.
+7. Treat Token Saver as incomplete until captured upstream fixtures prove filter detection, output transformation, ordering, defaults and bypass behavior.
+8. Do not report numeric performance improvements until measured against the JavaScript implementation with identical mock upstreams and payloads.
 
-## Milestones and release gates
-1. Inventory source revision, routes, env vars, settings defaults, schema, models, saver fixtures and example requests.
-2. Runtime foundation: config, logging, embedded assets, health/readiness, graceful shutdown, SQLite init.
-3. Endpoint/key + OpenCode Free: auth, models, upstream proxy, streams, cancellation, errors.
-4. Settings + proxypools: full CRUD and real transport selection.
-5. Usage + console: event flow, persistence, dashboards, bounded memory, redaction.
-6. Token Saver parity: existing algorithms/order/toggles, regression fixtures, benchmarks.
-7. Release verification: API tests, race tests, load tests, backup/restore, OS/architecture builds.
+## Release gates still open
 
-## Current scaffold gaps
-- Full legacy database schema/migrations and import/export.
-- Complete API key CRUD/access controls.
-- Full usage history/statistics and dashboard data.
-- All Token Saver algorithms and exact default behavior.
-- Console log parity beyond safe structured runtime logs.
-- Proxypool CRUD persistence and provider transport selection.
-- Full route/setting/auth UI parity and integration tests.
+1. Run integration tests against a sanitized copy of a real 9Router database; verify backup and restore, legacy settings, keys, usage and proxy configuration.
+2. Capture fixtures from the pinned upstream revision for each RTK filter and compare results byte-for-byte where relevant.
+3. Add edge tests for streaming cancellation, upstream 4xx/5xx bodies, tool-call payload variants, API-key access-policy cases, relay failures, no-proxy and strict mode.
+4. Test `go test -race ./...`, concurrent SQLite writes, longer streams, high-cardinality usage data and memory use with large history.
+5. Add packaging for supported OS/architectures and verify clean-start and upgrade paths.
+6. Reconcile each persisted setting and API response with upstream source before removing any compatibility placeholder.
 
-## Performance validation
-Measure against the JavaScript baseline with the same mock upstream, payload sizes, and concurrency. Track proxy overhead p50/p95/p99, time-to-first-byte, memory at idle/load, stream correctness, SQLite write latency, and Token Saver CPU. Do not advertise numeric improvements until measured.
+## Verification
+
+CI currently checks:
+
+- `go test ./...`
+- `go vet ./...`
+- `npm run check`
+- `npm run build`
+- Build and smoke-test the executable after removing the intermediate embedded-assets directory
+
+Passing CI demonstrates compilation, unit tests and basic package startup; it is not a substitute for the release gates above.
