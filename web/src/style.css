@@ -251,3 +251,22 @@ input[type=checkbox] { width: 35px; min-width: 35px; min-height: 19px; height: 1
   .key-row { gap: 6px; }
   .key-info { flex: 1 0 100%; min-width: 100%; }
 }
+
+
+/* Contrast fixes for the warm/light theme and its dark counterpart */
+.field > span { color: var(--text-muted,#6b7280); }
+.toolbar select, .field select {
+  background: var(--surface,#fff);
+  color: var(--text-main,#171717);
+  border-color: var(--border,#e5e7eb);
+  font: inherit;
+}
+.created-key {
+  border-color: color-mix(in srgb,var(--success,#10b981) 30%,var(--border,#e5e7eb));
+  background: color-mix(in srgb,var(--success,#10b981) 6%,var(--surface,#fff));
+}
+.created-key strong, .created-key code { color: var(--text-main,#171717); }
+.notice strong { color: var(--text-main,#171717); }
+.access-toggle { color: var(--text-main,#171717); }
+.error-text { color: var(--danger,#cf222e) !important; }
+.dark .created-key strong, .dark .created-key code, .dark .notice strong, .dark .access-toggle { color: var(--text-main,#ededed); }
