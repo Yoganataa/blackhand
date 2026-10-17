@@ -69,3 +69,18 @@ jobs:
           done
           test "$READY" -eq 1
           curl --fail --silent http://127.0.0.1:20991/ | grep -q 'Blackhand'
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run Windows build and smoke checks
+        shell: pwsh
+        run: ./scripts/test-windows.ps1
