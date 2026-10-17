@@ -167,21 +167,21 @@ func aggregateUsageDay(day map[string]any, entry UsageEntry, prompt, completion,
 	values := map[string]any{}
 	_ = values
 	if entry.Provider != "" {
-		mapCounter(usageMap(day,"byProvider"),entry.Provider,prompt,completion,cached,entry.Cost,nil)
+		mapCounter(usageMap(day,"byProvider"),entry.Provider,prompt,completion,cached,entry.Cost,map[string]any{"lastUsed":entry.Timestamp})
 	}
 	modelKey:=entry.Model
 	if entry.Provider!="" { modelKey += "|" + entry.Provider }
-	mapCounter(usageMap(day,"byModel"),modelKey,prompt,completion,cached,entry.Cost,map[string]any{"rawModel":entry.Model,"provider":entry.Provider})
+	mapCounter(usageMap(day,"byModel"),modelKey,prompt,completion,cached,entry.Cost,map[string]any{"rawModel":entry.Model,"provider":entry.Provider,"lastUsed":entry.Timestamp})
 	if entry.ConnectionID!="" {
 		mapCounter(usageMap(day,"byAccount"),entry.ConnectionID,prompt,completion,cached,entry.Cost,map[string]any{"rawModel":entry.Model,"provider":entry.Provider})
 	}
 	apiKey:=entry.APIKey
 	if apiKey=="" { apiKey="local-no-key" }
 	apiKeyKey:=apiKey+"|"+entry.Model+"|"+defaultString(entry.Provider,"unknown")
-	mapCounter(usageMap(day,"byApiKey"),apiKeyKey,prompt,completion,cached,entry.Cost,map[string]any{"rawModel":entry.Model,"provider":entry.Provider,"apiKey":entry.APIKey})
+	mapCounter(usageMap(day,"byApiKey"),apiKeyKey,prompt,completion,cached,entry.Cost,map[string]any{"rawModel":entry.Model,"provider":entry.Provider,"apiKey":entry.APIKey,"lastUsed":entry.Timestamp})
 	endpoint:=defaultString(entry.Endpoint,"Unknown")
 	endpointKey:=endpoint+"|"+entry.Model+"|"+defaultString(entry.Provider,"unknown")
-	mapCounter(usageMap(day,"byEndpoint"),endpointKey,prompt,completion,cached,entry.Cost,map[string]any{"endpoint":endpoint,"rawModel":entry.Model,"provider":entry.Provider})
+	mapCounter(usageMap(day,"byEndpoint"),endpointKey,prompt,completion,cached,entry.Cost,map[string]any{"endpoint":endpoint,"rawModel":entry.Model,"provider":entry.Provider,"lastUsed":entry.Timestamp})
 }
 
 func (s *Store) GetUsageHistory(ctx context.Context, filter UsageFilter) ([]map[string]any, error) {
@@ -210,7 +210,7 @@ func (s *Store) GetUsageHistory(ctx context.Context, filter UsageFilter) ([]map[
 	return out,rows.Err()
 }
 
-func (s *Store) GetUsageStats(ctx context.Context, period string) (map[string]any, error) {
+func (s *Store) getUsageStatsLegacy(ctx context.Context, period string) (map[string]any, error) {
 	if period=="" { period="all" }
 	if period!="today" && period!="24h" && period!="7d" && period!="30d" && period!="60d" && period!="all" { return nil,fmt.Errorf("Invalid period") }
 	now:=time.Now()
@@ -288,7 +288,7 @@ func (s *Store) GetUsageStats(ctx context.Context, period string) (map[string]an
 	return stats,nil
 }
 
-func (s *Store) GetChartData(ctx context.Context, period string) ([]map[string]any, error) {
+func (s *Store) getChartDataHourlyLegacy(ctx context.Context, period string) ([]map[string]any, error) {
 	if period==""{period="7d"}
 	if period!="today"&&period!="24h"&&period!="7d"&&period!="30d"&&period!="60d"&&period!="all"{return nil,fmt.Errorf("Invalid period")}
 	now:=time.Now(); start:=now

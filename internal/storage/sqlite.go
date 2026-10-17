@@ -95,6 +95,9 @@ func Open(dataDir string) (*Store, error) {
 	if err := store.migrateLegacyScaffold(ctx); err != nil {
 		return closeOnError(err)
 	}
+	if err := store.EnsureUsageRollups(ctx); err != nil {
+		return closeOnError(fmt.Errorf("initialize usage rollups: %w", err))
+	}
 	if err := store.EnsureConfiguredAPIKey(ctx); err != nil {
 		return closeOnError(fmt.Errorf("reconcile environment API key: %w", err))
 	}

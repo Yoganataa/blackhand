@@ -104,6 +104,11 @@ INSERT INTO usage_events(created_at,provider,model,status,prompt_tokens,completi
 	if len(pools)!=1||pools[0]["id"]!="legacy-pool"{t.Fatalf("legacy pool not imported: %#v",pools)}
 	rows,err:=s.GetUsageHistory(context.Background(),UsageFilter{});if err!=nil{t.Fatal(err)}
 	if len(rows)!=1||rows[0]["model"]!="oc/old-model"{t.Fatalf("legacy usage not imported: %#v",rows)}
+	var rollupCount int
+	if err:=s.DB.QueryRow("SELECT COUNT(*) FROM usageDaily").Scan(&rollupCount);err!=nil{t.Fatal(err)}
+	if rollupCount!=1{t.Fatalf("legacy usage daily rollup count = %d, want 1",rollupCount)}
+	stats,err:=s.GetUsageStats(context.Background(),"all");if err!=nil{t.Fatal(err)}
+	if numberValue(stats["totalRequests"])!=1{t.Fatalf("legacy rollup totalRequests = %#v",stats["totalRequests"])}
 	backups,err:=os.ReadDir(filepath.Join(dataDir,"db","backups"));if err!=nil{t.Fatal(err)}
 	if len(backups)==0{t.Fatal("missing pre-migration database backup")}
 }
