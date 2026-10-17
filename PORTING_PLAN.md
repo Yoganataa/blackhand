@@ -22,11 +22,11 @@ The branch is a feature port, not a promise of 1:1 parity or production readines
 | Endpoint & Key | Partial | Key CRUD, environment key reconciliation, active flag, per-key model allow-list, `/v1/models`, `/v1/chat/completions` | Full endpoint parity, more malformed-input and concurrent-key tests, comparison against existing installations |
 | OpenCode Free | Partial | Dynamic model discovery with TTL cache, `oc/` prefix normalization, streaming pass-through, client cancellation propagation, optional outbound proxy | No OAuth/account management or other providers; audit upstream errors/retries and stream disconnect semantics |
 | Settings | Partial | Persisted JSON settings, defaults, unknown-key preservation, password update | Password login only; OIDC/SAML values are stored but their login flows are not implemented; some settings are placeholders |
-| Usage | Implemented baseline | Request persistence, daily rollups, one-time rollup backfill when needed, chart/recent queries, 24-hour range query, masked API-key reporting | Exact cost/account aggregation parity, historical fixture comparisons, retention/export, usage write/stream stress tests |
-| Token Saver | Partial | A subset of RTK output compaction, optional Headroom call with timeouts/fail-open circuit, Caveman/Ponytail prompts | Not a full port of the upstream RTK filter set or exact prompts/order; PXPipe is deliberately skipped; Headroom deployment/bootstrap is external |
+| Usage | Implemented baseline; concurrency-tested | Request persistence and daily rollups; stress test covers 192 concurrent writes with a concurrent history reader; 5,000-row history query verifies limit, timestamp index and SQLite integrity | Exact cost/account aggregation parity, retention/export, longer stream tests, larger workload and memory benchmarks |
+| Token Saver | Partial; one filter fixture-backed | A subset of RTK output compaction; build-output output is byte-compared with a fixture derived from pinned 9Router source; optional Headroom timeout/fail-open circuit | Other filters and prompts/order are not fully fixture-proven; PXPipe is deliberately skipped; Headroom deployment/bootstrap is external |
 | Console Log | Partial | Bounded in-memory buffer, server/request events, SSE, clear/reconnect behavior | No persistence, complete translator/provider events, or exact UI parity |
 | Proxypools | Partial | CRUD, status test, active/strict options, no-proxy matching, standard HTTP(S) transport, Vercel/Cloudflare/Deno/Netlify relay headers | Relay deployment automation, per-provider-connection selection/rotation, all upstream edge cases and strict/no-proxy fixtures |
-| SQLite compatibility | Partial | Core table names/columns compatible with the selected 9Router schema, pre-repair backup, selected legacy Blackhand data imports | A complete audit of every upstream migration and a restore test against representative 9Router databases |
+| SQLite compatibility | Synthetic migration/restore-tested; real DB pending | Fixture derived from the upstream schema shape at commit `db6112897399ac981ca73ed573d14102e84ca0f1` covers additive v1→v2 migration, data retention, pre-change backup, and restoring the backup into a clean DATA_DIR; unrelated extension table survives | A sanitized copy of an actual 9Router database is still required; verify real keys, usage rollups, settings and proxy data against a real installation |
 
 ## Architecture
 
@@ -52,10 +52,10 @@ The branch is a feature port, not a promise of 1:1 parity or production readines
 
 ## Release gates still open
 
-1. Run integration tests against a sanitized copy of a real 9Router database; verify backup and restore, legacy settings, keys, usage and proxy configuration.
-2. Capture fixtures from the pinned upstream revision for each RTK filter and compare results byte-for-byte where relevant.
+1. Synthetic upstream-shaped schema-v1 fixture now verifies migration, preserved settings/keys/providers/proxy/combos/aliases/pricing/usage/request details, pre-change backup permissions, and restore. Still run the same assertions against a sanitized copy of an actual 9Router database before release.
+2. One build-output fixture is byte-compared against 9Router `open-sse/rtk/filters/buildOutput.js` at commit `db6112897399ac981ca73ed573d14102e84ca0f1`; capture equivalent fixtures for every remaining RTK filter, detection order, prompts, defaults and bypass cases.
 3. Add edge tests for streaming cancellation, upstream 4xx/5xx bodies, tool-call payload variants, API-key access-policy cases, relay failures, no-proxy and strict mode.
-4. CI runs `go test -race ./...`; still add focused stress tests for concurrent SQLite writes, longer streams, high-cardinality usage data and memory use with large history.
+4. CI runs `go test -race ./...`; a stress test covers 192 concurrent usage writes alongside reads, and a 5,000-row history test verifies bounds, the timestamp index and SQLite integrity. Still test longer streams, cross-process write contention, realistic high-cardinality production data and memory use with large history.
 5. Add packaging for supported OS/architectures and verify clean-start and upgrade paths.
 6. Reconcile each persisted setting and API response with upstream source before removing any compatibility placeholder.
 
