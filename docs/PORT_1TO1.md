@@ -122,6 +122,14 @@ must land as working features, not as dead buttons:
 - Media Providers accordion, Skills, Translator, 9Remote, 9English
 - provider detail breadcrumbs in the Header title (Providers phase)
 
+Wiring notes from the first shell integration (`web/src/App.svelte`):
+
+- The invented "Overview" area is gone; `/dashboard` resolves to Endpoint & Key, like upstream's index.
+- Upstream has a dedicated `/login` page. Blackhand still shows the previous in-app login overlay,
+  because the login page sits outside the seven in-scope areas; revisit when the auth surface is ported.
+- The area bodies are still the previous implementations (legacy CSS classes) rendered inside the new
+  shell, so their look is interim until each area is replaced by its 1:1 port.
+
 ## Rules
 
 1. Official `master` is the source of truth; when this repo and upstream disagree, upstream wins.
