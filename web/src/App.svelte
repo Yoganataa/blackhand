@@ -367,7 +367,6 @@
       {#each sections.filter(section => section.group !== "system") as section}
         <button class:active={active === section.name} class="nav-item" onclick={() => go(section.name)}>
           <span class="nav-icon material-symbols-outlined">{section.icon}</span><span>{section.label || section.name}</span>
-          {#if section.name === "Providers"}<span class="nav-count">1</span>{/if}
         </button>
       {/each}
       <div class="nav-group-label">SYSTEM</div>
