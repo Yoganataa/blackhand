@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -103,8 +105,10 @@ func (a *API) staticHandler() http.Handler {
 		defer index.Close()
 		info, err := index.Stat()
 		if err != nil { http.Error(w, "web app unavailable", 503); return }
+		data, err := io.ReadAll(index)
+		if err != nil { http.Error(w, "web app unavailable", 503); return }
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		http.ServeContent(w, r, "index.html", info.ModTime(), index)
+		http.ServeContent(w, r, "index.html", info.ModTime(), bytes.NewReader(data))
 	})
 }
 func (a *API) requestLogger(next http.Handler) http.Handler {
