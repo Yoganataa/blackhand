@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -71,8 +72,24 @@ func prefixModels(models []Model) []Model {
 }
 func (p *Provider) ProxyChat(w http.ResponseWriter, r *http.Request) {
 	target := strings.TrimRight(p.cfg.UpstreamBaseURL, "/") + "/chat/completions"
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, r.Body)
+	body, err := io.ReadAll(r.Body)
+	if err != nil { http.Error(w, "invalid request body", http.StatusRequestEntityTooLarge); return }
+
+	// Keep the public 9Router model namespace while sending the provider's native model ID upstream.
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(body, &payload) == nil {
+		var model string
+		if raw, ok := payload["model"]; ok && json.Unmarshal(raw, &model) == nil && strings.HasPrefix(model, "oc/") {
+			encoded, marshalErr := json.Marshal(strings.TrimPrefix(model, "oc/"))
+			if marshalErr == nil {
+				payload["model"] = encoded
+				if rewritten, rewriteErr := json.Marshal(payload); rewriteErr == nil { body = rewritten }
+			}
+		}
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(body))
 	if err != nil { http.Error(w, "invalid upstream request", http.StatusBadGateway); return }
+	req.ContentLength = int64(len(body))
 	for _, h := range []string{"Content-Type", "Accept"} { if v := r.Header.Get(h); v != "" { req.Header.Set(h, v) } }
 	if p.cfg.UpstreamAPIKey != "" { req.Header.Set("Authorization", "Bearer "+p.cfg.UpstreamAPIKey) }
 	resp, err := p.upstreamClient.Do(req)
