@@ -142,9 +142,7 @@ func (a *API) attachActiveRequests(stats map[string]any){a.activeMu.Lock();defer
 func (a *API) usageStream(w http.ResponseWriter,r *http.Request){
 	w.Header().Set("Content-Type","text/event-stream");w.Header().Set("Cache-Control","no-cache, no-transform");w.Header().Set("Connection","keep-alive");w.Header().Set("X-Accel-Buffering","no")
 	flusher,ok:=w.(http.Flusher);if !ok{http.Error(w,"streaming not supported",500);return}
-	send:=func(){stats,err:=a.store.GetUsageStats(r.Context(),"all");if err!=nil{return};a.attachActiveRequests(stats);if raw,err:=json.Marshal(stats);err==nil{_,_=fmt.Fprintf(w,"data: %s
-
-",raw);flusher.Flush()}}
+	send:=func(){stats,err:=a.store.GetUsageStats(r.Context(),"all");if err!=nil{return};a.attachActiveRequests(stats);if raw,err:=json.Marshal(stats);err==nil{_,_=fmt.Fprintf(w,"data: %s\n\n",raw);flusher.Flush()}}
 	send();ticker:=time.NewTicker(3*time.Second);defer ticker.Stop()
 	for{select{case<-r.Context().Done():return;case<-ticker.C:send()}}
 }
@@ -167,8 +165,6 @@ func (a *API) consoleLogsStream(w http.ResponseWriter,r *http.Request){
 	ping:=time.NewTicker(25*time.Second);defer ping.Stop()
 	for{select{case<-r.Context().Done():return;case event:=<-ch:raw,_:=json.Marshal(map[string]any{"type":event.Type,"line":event.Line});_,_=fmt.Fprintf(w,"data: %s
 
-",raw);flusher.Flush();case<-ping.C:_,_=io.WriteString(w,": ping
-
-");flusher.Flush()}}
+",raw);flusher.Flush();case<-ping.C:_,_=io.WriteString(w,": ping\n\n");flusher.Flush()}}
 }
 
