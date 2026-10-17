@@ -84,6 +84,22 @@ func (l *loginLimiter) makeRoomLocked(now time.Time) bool {
 	return true
 }
 
+func (l *loginLimiter) nextUnlockDelayLocked(now time.Time) time.Duration {
+	var soonest time.Duration
+	for _, attempt := range l.entries {
+		if now.Before(attempt.LockedUntil) {
+			remaining := attempt.LockedUntil.Sub(now)
+			if soonest == 0 || remaining < soonest {
+				soonest = remaining
+			}
+		}
+	}
+	if soonest == 0 {
+		return loginCleanupInterval
+	}
+	return soonest
+}
+
 func (l *loginLimiter) allow(ip string, now time.Time) (bool, time.Duration) {
 	l.Lock()
 	defer l.Unlock()
@@ -97,7 +113,7 @@ func (l *loginLimiter) allow(ip string, now time.Time) (bool, time.Duration) {
 		return true, 0
 	}
 	if !l.makeRoomLocked(now) {
-		return false, loginCleanupInterval
+		return false, l.nextUnlockDelayLocked(now)
 	}
 	l.entries[ip] = loginAttempt{LastSeen: now}
 	return true, 0
