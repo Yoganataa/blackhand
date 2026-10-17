@@ -38,6 +38,8 @@ make build
 
 The build compiles the SPA and embeds its static assets in the Go executable. Node.js is not needed to run the packaged binary. Runtime data, the SQLite database, and backups live outside the executable under `DATA_DIR` (default `./data`).
 
+On Windows PowerShell 7, run `pwsh -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test-windows.ps1` to run Go tests/vet, frontend checks/build, create `bin\\blackhand.exe`, and smoke-test it against a temporary data directory. See [Windows verification and migration testing](docs/WINDOWS_TESTING.md). The script never opens your production 9Router database.
+
 Run the current checks:
 
 ```sh
