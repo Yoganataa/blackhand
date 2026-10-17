@@ -3,6 +3,7 @@ package tokensaver
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +20,12 @@ func TestBuildOutputMatchesPinnedUpstreamFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// Git may check text fixtures out as CRLF on Windows. Canonicalize line
+	// endings before the byte-exact comparison so generated summary lines and
+	// preserved input lines use one stable fixture representation on every OS.
+	input = []byte(strings.ReplaceAll(strings.ReplaceAll(string(input), "\r\n", "\n"), "\r", "\n"))
+	expected = []byte(strings.ReplaceAll(strings.ReplaceAll(string(expected), "\r\n", "\n"), "\r", "\n"))
 
 	got := filterBuildOutput(string(input))
 	if got != string(expected) {
