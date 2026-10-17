@@ -501,7 +501,7 @@
       <h1>Sign in</h1>
       <p>Authenticate to manage API keys, runtime settings, usage and proxy pools.</p>
       {#if authError}<div class="message error">{authError}</div>{/if}
-      <label class="field"><span>Dashboard password</span><input type="password" bind:value={password} autocomplete="current-password" required autofocus /></label>
+      <label class="field"><span>Dashboard password</span><input type="password" bind:value={password} autocomplete="current-password" required /></label>
       <button class="button primary login-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
       <small>Fresh local installs use INITIAL_PASSWORD or the default password. Remote access must not use the default password.</small>
     </form>
