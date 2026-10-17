@@ -470,3 +470,144 @@ func TestUsageHistoryHighCardinalityHonorsLimitAndTimestampIndex(t *testing.T) {
 		t.Fatalf("SQLite integrity_check = %q", integrity)
 	}
 }
+
+
+func TestSanitizedSuppliedDatabaseShapeMigrationPreservesSettingsUsageAndKey(t *testing.T) {
+	t.Setenv("NINEROUTER_API_KEY", "")
+	dataDir := filepath.Join(t.TempDir(), "data")
+	dbPath := filepath.Join(dataDir, "db", "data.sqlite")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(filepath.Join("testdata", "supplied-db-shape-v1.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rawDB.Exec(string(fixture)); err != nil {
+		_ = rawDB.Close()
+		t.Fatalf("load sanitized supplied-database shape: %v", err)
+	}
+	if err := rawDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(dataDir)
+	if err != nil {
+		t.Fatalf("open and migrate sanitized database shape: %v", err)
+	}
+	defer store.Close()
+
+	for table, want := range map[string]int{
+		"settings": 1, "apiKeys": 1, "usageHistory": 3, "usageDaily": 1,
+		"providerConnections": 0, "providerNodes": 0, "proxyPools": 0,
+		"combos": 0, "kv": 0, "requestDetails": 0,
+	} {
+		if got := tableRowCount(t, store.DB, table); got != want {
+			t.Errorf("%s rows = %d, want %d", table, got, want)
+		}
+	}
+
+	var version string
+	if err := store.DB.QueryRow("SELECT value FROM _meta WHERE key='schemaVersion'").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != schemaVersionExpectedForTest {
+		t.Fatalf("schemaVersion after migration = %q, want %s", version, schemaVersionExpectedForTest)
+	}
+
+	settings, err := store.GetSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings["fixtureMarker"] != "preserve-sanitized-settings" || settings["rtkEnabled"] != true {
+		t.Fatalf("settings were not preserved through migration: marker=%v rtkEnabled=%v", settings["fixtureMarker"], settings["rtkEnabled"])
+	}
+
+	const fixtureKey = "sk-blackhand-fixture-key-never-use"
+	key, err := store.GetAPIKeyByKey(context.Background(), fixtureKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key == nil || !key.IsActive || key.Key != fixtureKey || key.Access.Restricted {
+		t.Fatalf("active unrestricted fixture API key did not survive migration: %#v", key)
+	}
+
+	history, err := store.GetUsageHistory(context.Background(), UsageFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 3 {
+		t.Fatalf("usage history returned %d rows, want 3", len(history))
+	}
+	for _, row := range history {
+		if strings.Contains(fmt.Sprint(row["apiKeyMasked"]), fixtureKey) {
+			t.Fatal("usage history leaked the raw fixture key")
+		}
+	}
+	stats, err := store.GetUsageStats(context.Background(), "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := numberValue(stats["totalRequests"]); got != 3 {
+		t.Fatalf("usage stats totalRequests = %v, want 3", got)
+	}
+	if got := numberValue(stats["totalPromptTokens"]); got != 1496603 {
+		t.Fatalf("usage stats prompt tokens = %v, want 1496603", got)
+	}
+	if got := numberValue(stats["totalCompletionTokens"]); got != 3104 {
+		t.Fatalf("usage stats completion tokens = %v, want 3104", got)
+	}
+	if got := numberValue(stats["totalCachedTokens"]); got != 588416 {
+		t.Fatalf("usage stats cached tokens = %v, want 588416", got)
+	}
+	if got := numberValue(stats["totalCost"]); got < 0.1302586 || got > 0.1302588 {
+		t.Fatalf("usage stats cost = %.10f, want approximately 0.1302587048", got)
+	}
+
+	backupDir := filepath.Join(dataDir, "db", "backups")
+	backups, err := os.ReadDir(backupDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("backup count = %d, want exactly one pre-migration backup", len(backups))
+	}
+	backupPath := filepath.Join(backupDir, backups[0].Name())
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("backup permissions = %04o, want 0600", info.Mode().Perm())
+	}
+	backupDB, err := sql.Open("sqlite", backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backupDB.Close()
+	if err := backupDB.QueryRow("SELECT value FROM _meta WHERE key='schemaVersion'").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != "1" {
+		t.Fatalf("backup schemaVersion = %q, want original version 1", version)
+	}
+	for table, want := range map[string]int{"settings": 1, "apiKeys": 1, "usageHistory": 3, "usageDaily": 1} {
+		if got := tableRowCount(t, backupDB, table); got != want {
+			t.Errorf("pre-migration backup %s rows = %d, want %d", table, got, want)
+		}
+	}
+	var rawSettings string
+	if err := backupDB.QueryRow("SELECT data FROM settings WHERE id=1").Scan(&rawSettings); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rawSettings, "preserve-sanitized-settings") {
+		t.Fatal("pre-migration backup lost the settings fixture marker")
+	}
+	if got := tableRowCount(t, backupDB, "usageHistory"); got != 3 {
+		t.Fatalf("pre-migration backup usage history = %d, want 3", got)
+	}
+}
