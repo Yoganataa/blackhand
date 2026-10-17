@@ -69,6 +69,7 @@ func DefaultSettings() map[string]any {
 		"observabilityMaxJsonSize": 5,
 		"outboundProxyEnabled": false,
 		"outboundProxyUrl": "",
+		"outboundProxyPoolId": "",
 		"outboundNoProxy": "",
 		"mitmRouterBaseUrl": "http://localhost:20128",
 		"dnsToolEnabled": map[string]any{},

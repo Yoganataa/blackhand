@@ -120,6 +120,7 @@
       if (section === "Providers") await loadModels();
       if (section === "Usage") await loadUsage();
       if (section === "Token Saver" || section === "Settings") await loadSettings();
+      if (section === "Settings") await loadPools();
       if (section === "Console Log") await openConsoleStream();
       if (section === "Proxypools") await loadPools();
     } catch (error) { actionError = error instanceof Error ? error.message : "Could not load this section"; }
@@ -411,8 +412,18 @@
             <label class="setting-row"><span><strong>Require API key</strong><small>Require a valid active key for /v1 inference endpoints.</small></span><input type="checkbox" checked={settings.requireApiKey !== false} onchange={(e) => saveSetting("requireApiKey", (e.currentTarget as HTMLInputElement).checked)} /></label>
             <label class="setting-row"><span><strong>Outbound proxy</strong><small>Apply configured HTTP(S) proxy to OpenCode Free requests.</small></span><input type="checkbox" checked={Boolean(settings.outboundProxyEnabled)} onchange={(e) => saveSetting("outboundProxyEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
           </div>
-          <div class="field-grid"><label class="field"><span>Outbound proxy URL</span><input bind:value={settings.outboundProxyUrl} placeholder="http://127.0.0.1:8080" /></label><label class="field"><span>No-proxy list</span><input bind:value={settings.outboundNoProxy} placeholder="localhost,127.0.0.1" /></label></div>
-          <button class="button primary" onclick={async () => { await saveSetting("outboundProxyUrl", settings.outboundProxyUrl || ""); await saveSetting("outboundNoProxy", settings.outboundNoProxy || ""); }}>Save network settings</button>
+          <div class="field-grid">
+            <label class="field"><span>Outbound proxy pool</span>
+              <select bind:value={settings.outboundProxyPoolId} onchange={() => saveSetting("outboundProxyPoolId", settings.outboundProxyPoolId || "")}>
+                <option value="">Use direct or proxy URL below</option>
+                {#each pools as pool (pool.id)}<option value={pool.id}>{pool.name} · {pool.type}{pool.isActive ? "" : " (inactive)"}</option>{/each}
+              </select>
+            </label>
+            <label class="field"><span>Outbound proxy URL (legacy)</span><input bind:value={settings.outboundProxyUrl} placeholder="http://127.0.0.1:8080" /></label>
+            <label class="field"><span>No-proxy list (legacy)</span><input bind:value={settings.outboundNoProxy} placeholder="localhost,127.0.0.1" /></label>
+          </div>
+          <button class="button primary" onclick={async () => { await saveSetting("outboundProxyUrl", settings.outboundProxyUrl || ""); await saveSetting("outboundNoProxy", settings.outboundNoProxy || ""); await saveSetting("outboundProxyPoolId", settings.outboundProxyPoolId || ""); }}>Save network settings</button>
+          <p class="muted">When outbound proxy is enabled, the selected pool takes precedence over the legacy proxy URL. A strict pool never falls back directly when the proxy is unavailable.</p>
         </div>
         <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">DASHBOARD SECURITY</div><h2>{hasPassword ? "Change password" : "Set a password"}</h2></div></div>
           <form class="password-form" onsubmit={savePassword}>

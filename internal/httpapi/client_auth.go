@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Yoganataa/blackhand/internal/provider/opencode"
 	"github.com/Yoganataa/blackhand/internal/storage"
 )
 
@@ -60,10 +61,45 @@ func (a *API) chat(w http.ResponseWriter,r *http.Request){
 		saverStats:=a.tokenSaver.Process(r.Context(),body,settings,model)
 		prepared,err:=json.Marshal(body);if err!=nil{writeJSON(w,400,map[string]string{"error":"Could not encode request"});return}
 		r.Body=io.NopCloser(bytes.NewReader(prepared))
-		proxyURL:=""
-		if enabledSetting(settings["outboundProxyEnabled"],false){proxyURL,_=settings["outboundProxyUrl"].(string)}
+		proxyOptions:=opencode.ProxyOptions{}
+		if enabledSetting(settings["outboundProxyEnabled"],false) {
+			proxyOptions.URL,_=settings["outboundProxyUrl"].(string)
+			proxyOptions.NoProxy,_=settings["outboundNoProxy"].(string)
+			poolID,_:=settings["outboundProxyPoolId"].(string)
+			if strings.TrimSpace(poolID)!="" {
+				pool,poolErr:=a.store.GetProxyPool(r.Context(),strings.TrimSpace(poolID))
+				if poolErr!=nil {
+					writeJSON(w,502,map[string]string{"error":"Could not resolve selected outbound proxy pool"})
+					return
+				}
+				if pool==nil {
+					// An explicitly selected but deleted pool is a configuration error,
+					// not a reason to silently send traffic directly.
+					writeJSON(w,502,map[string]string{"error":"Selected outbound proxy pool does not exist"})
+					return
+				}
+				proxyOptions.Strict=pool["strictProxy"]==true
+				poolURL,_:=pool["proxyUrl"].(string)
+				poolType,_:=pool["type"].(string)
+				poolActive:=pool["isActive"]==true&&strings.TrimSpace(poolURL)!=""
+				if poolActive {
+					proxyOptions.NoProxy,_=pool["noProxy"].(string)
+					switch poolType {
+					case "vercel","cloudflare","deno","netlify":
+						proxyOptions.URL=""
+						proxyOptions.RelayURL=poolURL
+					default:
+						proxyOptions.URL=poolURL
+						proxyOptions.RelayURL=""
+					}
+				} else if proxyOptions.Strict {
+					writeJSON(w,502,map[string]string{"error":"Selected proxy pool is strict but inactive or has no URL"})
+					return
+				}
+			}
+		}
 		a.beginRequest(model);started:=time.Now()
-		result:=a.provider.ProxyChatWithProxy(w,r,proxyURL)
+		result:=a.provider.ProxyChatWithOptions(w,r,proxyOptions)
 		a.endRequest(model)
 		if result.Error!=""{a.appendLog("OpenCode request ended: "+result.Error)}
 		meta:=map[string]any{"tokenSaver":saverStats,"durationMs":time.Since(started).Milliseconds()}

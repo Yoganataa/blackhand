@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -33,6 +34,7 @@ type Model struct {
 }
 type modelResponse struct { Data []Model `json:"data"` }
 type ProxyResult struct { StatusCode int; Usage map[string]any; Error string }
+type ProxyOptions struct { URL string; NoProxy string; RelayURL string; Strict bool }
 
 func New(cfg config.Config) *Provider {
 	return &Provider{cfg:cfg,discoveryClient:&http.Client{Timeout:cfg.DiscoveryTimeout},upstreamClient:&http.Client{Timeout:cfg.UpstreamTimeout}}
@@ -58,7 +60,10 @@ func prefixModels(models []Model)[]Model{out:=make([]Model,len(models));copy(out
 // ProxyChat preserves incremental SSE delivery, forwards cancellation, and
 // extracts usage without retaining the full generated response in memory.
 func(p *Provider)ProxyChat(w http.ResponseWriter,r *http.Request){_ = p.ProxyChatWithProxy(w,r,"")}
-func(p *Provider)ProxyChatWithProxy(w http.ResponseWriter,r *http.Request,proxyURL string)ProxyResult{
+func(p *Provider)ProxyChatWithProxy(w http.ResponseWriter,r *http.Request,proxyURL string)ProxyResult {
+	return p.ProxyChatWithOptions(w,r,ProxyOptions{URL:proxyURL})
+}
+func(p *Provider)ProxyChatWithOptions(w http.ResponseWriter,r *http.Request,options ProxyOptions)ProxyResult {
 	result:=ProxyResult{StatusCode:502,Usage:map[string]any{}}
 	body,err:=io.ReadAll(http.MaxBytesReader(w,r.Body,16<<20))
 	if err!=nil{http.Error(w,"request body is too large or invalid",http.StatusRequestEntityTooLarge);result.Error="request body invalid";return result}
@@ -71,24 +76,61 @@ func(p *Provider)ProxyChatWithProxy(w http.ResponseWriter,r *http.Request,proxyU
 		}
 	}
 	target:=strings.TrimRight(p.cfg.UpstreamBaseURL,"/")+"/chat/completions"
-	req,err:=http.NewRequestWithContext(r.Context(),http.MethodPost,target,bytes.NewReader(body))
-	if err!=nil{http.Error(w,"invalid upstream request",502);result.Error="invalid upstream request";return result}
-	req.ContentLength=int64(len(body))
-	for _,header:=range []string{"Content-Type","Accept"}{if value:=r.Header.Get(header);value!=""{req.Header.Set(header,value)}}
-	if p.cfg.UpstreamAPIKey!=""{req.Header.Set("Authorization","Bearer "+p.cfg.UpstreamAPIKey)}
+	targetURL,parseErr:=url.Parse(target)
+	if parseErr!=nil { http.Error(w,"invalid upstream URL",502); result.Error="invalid upstream URL"; return result }
+	relayURL:=strings.TrimSpace(options.RelayURL)
+	proxyURL:=strings.TrimSpace(options.URL)
+	if shouldBypassHost(targetURL.Hostname(),options.NoProxy) {
+		relayURL=""
+		proxyURL=""
+	}
+	requestURL:=target
+	if relayURL!="" { requestURL=relayURL }
+	makeRequest:=func()(*http.Request,error){
+		req,err:=http.NewRequestWithContext(r.Context(),http.MethodPost,requestURL,bytes.NewReader(body))
+		if err!=nil{return nil,err}
+		req.ContentLength=int64(len(body))
+		for _,header:=range []string{"Content-Type","Accept"}{if value:=r.Header.Get(header);value!=""{req.Header.Set(header,value)}}
+		if p.cfg.UpstreamAPIKey!=""{req.Header.Set("Authorization","Bearer "+p.cfg.UpstreamAPIKey)}
+		if relayURL!="" {
+			req.Header.Set("x-relay-target",targetURL.Scheme+"://"+targetURL.Host)
+			req.Header.Set("x-relay-path",targetURL.RequestURI())
+		}
+		return req,nil
+	}
 	client:=p.upstreamClient
 	var transport *http.Transport
-	if strings.TrimSpace(proxyURL)!=""{
-		parsed,parseErr:=url.Parse(proxyURL)
-		if parseErr!=nil||(parsed.Scheme!="http"&&parsed.Scheme!="https")||parsed.Host==""{http.Error(w,"invalid outbound proxy URL",502);result.Error="invalid outbound proxy URL";return result}
+	if proxyURL!=""{
+		parsed,proxyErr:=url.Parse(proxyURL)
+		if proxyErr!=nil||(parsed.Scheme!="http"&&parsed.Scheme!="https")||parsed.Host==""{http.Error(w,"invalid outbound proxy URL",502);result.Error="invalid outbound proxy URL";return result}
 		base,ok:=http.DefaultTransport.(*http.Transport);if !ok{http.Error(w,"invalid HTTP transport",502);return result}
-		transport=base.Clone();transport.Proxy=http.ProxyURL(parsed);defer transport.CloseIdleConnections()
+		transport=base.Clone()
+		transport.Proxy=func(req *http.Request)(*url.URL,error){
+			if shouldBypassHost(req.URL.Hostname(),options.NoProxy){return nil,nil}
+			return parsed,nil
+		}
+		defer transport.CloseIdleConnections()
 		client=&http.Client{Transport:transport,Timeout:p.cfg.UpstreamTimeout}
 	}
+	req,err:=makeRequest()
+	if err!=nil{http.Error(w,"invalid upstream request",502);result.Error="invalid upstream request";return result}
 	resp,err:=client.Do(req)
 	if err!=nil{
 		if errors.Is(err,context.Canceled)||errors.Is(r.Context().Err(),context.Canceled){result.Error="request cancelled";return result}
-		http.Error(w,"upstream request failed",502);result.Error="upstream request failed";return result
+		// 9Router falls back to direct networking when strictProxy is false.
+		// The retry is safe here because no response body has been sent to the client.
+		if client!=p.upstreamClient&&!options.Strict{
+			directTarget:=target
+			if relayURL!="" { directTarget=target }
+			directReq,buildErr:=http.NewRequestWithContext(r.Context(),http.MethodPost,directTarget,bytes.NewReader(body))
+			if buildErr==nil{
+				directReq.ContentLength=int64(len(body))
+				for _,header:=range []string{"Content-Type","Accept"}{if value:=r.Header.Get(header);value!=""{directReq.Header.Set(header,value)}}
+				if p.cfg.UpstreamAPIKey!=""{directReq.Header.Set("Authorization","Bearer "+p.cfg.UpstreamAPIKey)}
+				resp,err=p.upstreamClient.Do(directReq)
+			}
+		}
+		if err!=nil{http.Error(w,"upstream request failed",502);result.Error="upstream request failed";return result}
 	}
 	defer resp.Body.Close()
 	result.StatusCode=resp.StatusCode
@@ -116,6 +158,24 @@ func(p *Provider)ProxyChatWithProxy(w http.ResponseWriter,r *http.Request,proxyU
 	w.WriteHeader(resp.StatusCode);_,_=w.Write(responseBody)
 	return result
 }
+func shouldBypassHost(host,noProxy string) bool {
+	host=strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)),".")
+	if host==""||strings.TrimSpace(noProxy)==""{return false}
+	for _,entry:=range strings.FieldsFunc(noProxy,func(r rune)bool{return r==','||r==' '||r=='\t'||r=='\n'}){
+		pattern:=strings.ToLower(strings.TrimSpace(entry))
+		if pattern==""{continue}
+		if pattern=="*"{return true}
+		if strings.Contains(pattern,"/"){
+			_,network,err:=net.ParseCIDR(pattern)
+			if err==nil { if ip:=net.ParseIP(host);ip!=nil&&network.Contains(ip){return true} }
+			continue
+		}
+		pattern=strings.TrimSuffix(pattern,".")
+		if host==strings.TrimPrefix(pattern,".")||strings.HasSuffix(host,"."+strings.TrimPrefix(pattern,".")){return true}
+	}
+	return false
+}
+
 func parseSSEUsage(line []byte,usage map[string]any){
 	raw:=bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(line),[]byte("data:")))
 	if len(raw)==0||bytes.Equal(raw,[]byte("[DONE]")){return}
