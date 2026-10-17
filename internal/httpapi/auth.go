@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -21,8 +20,114 @@ import (
 const dashboardCookieName = "blackhand_session"
 const sessionTTL = 12 * time.Hour
 
-type loginAttempt struct { Count int; LockedUntil time.Time }
-var loginLimit = struct{sync.Mutex; entries map[string]loginAttempt}{entries:map[string]loginAttempt{}}
+const (
+	loginAttemptThreshold = 5
+	loginLockDuration = 15 * time.Minute
+	loginEntryIdleTTL = 30 * time.Minute
+	loginCleanupInterval = time.Minute
+	maxLoginLimitEntries = 4096
+)
+
+type loginAttempt struct {
+	Count int
+	LockedUntil time.Time
+	LastSeen time.Time
+}
+
+type loginLimiter struct {
+	sync.Mutex
+	entries map[string]loginAttempt
+	lastCleanup time.Time
+}
+
+func newLoginLimiter() *loginLimiter {
+	return &loginLimiter{entries: make(map[string]loginAttempt)}
+}
+
+var loginLimit = newLoginLimiter()
+
+// cleanupLocked removes old, unlocked entries at most once per minute.
+func (l *loginLimiter) cleanupLocked(now time.Time) {
+	if !l.lastCleanup.IsZero() && now.Sub(l.lastCleanup) < loginCleanupInterval {
+		return
+	}
+	for ip, attempt := range l.entries {
+		if !now.Before(attempt.LockedUntil) && now.Sub(attempt.LastSeen) >= loginEntryIdleTTL {
+			delete(l.entries, ip)
+		}
+	}
+	l.lastCleanup = now
+}
+
+// makeRoomLocked preserves active lockouts. It evicts the least-recently-seen
+// unlocked entry rather than allowing attacker-controlled IP cardinality to
+// grow the process indefinitely.
+func (l *loginLimiter) makeRoomLocked(now time.Time) bool {
+	if len(l.entries) < maxLoginLimitEntries {
+		return true
+	}
+	oldestIP := ""
+	var oldestSeen time.Time
+	for ip, attempt := range l.entries {
+		if now.Before(attempt.LockedUntil) {
+			continue
+		}
+		if oldestIP == "" || attempt.LastSeen.Before(oldestSeen) {
+			oldestIP = ip
+			oldestSeen = attempt.LastSeen
+		}
+	}
+	if oldestIP == "" {
+		return false
+	}
+	delete(l.entries, oldestIP)
+	return true
+}
+
+func (l *loginLimiter) allow(ip string, now time.Time) (bool, time.Duration) {
+	l.Lock()
+	defer l.Unlock()
+	l.cleanupLocked(now)
+	if attempt, exists := l.entries[ip]; exists {
+		attempt.LastSeen = now
+		l.entries[ip] = attempt
+		if now.Before(attempt.LockedUntil) {
+			return false, attempt.LockedUntil.Sub(now)
+		}
+		return true, 0
+	}
+	if !l.makeRoomLocked(now) {
+		return false, loginCleanupInterval
+	}
+	l.entries[ip] = loginAttempt{LastSeen: now}
+	return true, 0
+}
+
+func (l *loginLimiter) recordFailure(ip string, now time.Time) {
+	l.Lock()
+	defer l.Unlock()
+	l.cleanupLocked(now)
+	attempt, exists := l.entries[ip]
+	if !exists {
+		if !l.makeRoomLocked(now) {
+			return
+		}
+		attempt = loginAttempt{}
+	}
+	attempt.Count++
+	attempt.LastSeen = now
+	if attempt.Count >= loginAttemptThreshold {
+		attempt.Count = 0
+		attempt.LockedUntil = now.Add(loginLockDuration)
+	}
+	l.entries[ip] = attempt
+}
+
+func (l *loginLimiter) clear(ip string) {
+	l.Lock()
+	delete(l.entries, ip)
+	l.Unlock()
+}
 
 func clientIP(r *http.Request) string {
 	host,_,err:=net.SplitHostPort(r.RemoteAddr)
@@ -89,8 +194,13 @@ func (a *API) authSession(w http.ResponseWriter,r *http.Request) {
 }
 func enabledSetting(v any,fallback bool)bool{if v==nil{return fallback};b,ok:=v.(bool);if ok{return b};return fallback}
 func (a *API) authLogin(w http.ResponseWriter,r *http.Request) {
-	ip:=clientIP(r);loginLimit.Lock();attempt:=loginLimit.entries[ip]
-	if time.Now().Before(attempt.LockedUntil){wait:=int(time.Until(attempt.LockedUntil).Seconds())+1;loginLimit.Unlock();w.Header().Set("Retry-After",fmt.Sprint(wait));writeJSON(w,429,map[string]any{"error":"Too many failed attempts","retryAfter":wait});return};loginLimit.Unlock()
+	ip := clientIP(r)
+	if allowed, retry := loginLimit.allow(ip, time.Now()); !allowed {
+		wait := int(retry.Seconds()) + 1
+		w.Header().Set("Retry-After", fmt.Sprint(wait))
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "Too many failed attempts", "retryAfter": wait})
+		return
+	}
 	var body struct{Password string `json:"password"`}
 	if err:=decodeJSON(w,r,&body,64<<10);err!=nil{writeJSON(w,400,map[string]string{"error":"Invalid JSON"});return}
 	settings,err:=a.store.GetSettings(r.Context());if err!=nil{writeJSON(w,500,map[string]string{"error":"settings unavailable"});return}
@@ -109,10 +219,10 @@ func (a *API) authLogin(w http.ResponseWriter,r *http.Request) {
 		initial:=os.Getenv("INITIAL_PASSWORD");if initial==""{initial="123456"};valid=body.Password==initial
 	}
 	if !valid {
-		loginLimit.Lock();attempt=loginLimit.entries[ip];attempt.Count++;if attempt.Count>=5{attempt.LockedUntil=time.Now().Add(15*time.Minute);attempt.Count=0};loginLimit.entries[ip]=attempt;loginLimit.Unlock()
+		loginLimit.recordFailure(ip, time.Now())
 		writeJSON(w,401,map[string]string{"error":"Invalid password"});return
 	}
-	loginLimit.Lock();delete(loginLimit.entries,ip);loginLimit.Unlock()
+	loginLimit.clear(ip)
 	if storedHash==""&&os.Getenv("INITIAL_PASSWORD")==""&&!isLocalRequest(r) {
 		writeJSON(w,403,map[string]any{"success":false,"mustChangePassword":true,"error":"Default password must be changed from localhost before remote access, or set INITIAL_PASSWORD before startup"});return
 	}
@@ -120,4 +230,3 @@ func (a *API) authLogin(w http.ResponseWriter,r *http.Request) {
 	writeJSON(w,200,map[string]any{"success":true,"mustChangePassword":storedHash==""&&os.Getenv("INITIAL_PASSWORD")==""})
 }
 func (a *API) authLogout(w http.ResponseWriter,r *http.Request){clearSessionCookie(w,r);writeJSON(w,200,map[string]any{"success":true})}
-var _ = errors.Is
