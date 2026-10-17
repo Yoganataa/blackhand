@@ -31,6 +31,14 @@ foreach ($tool in @("go", "node", "npm")) {
 
 Push-Location $RepoRoot
 try {
+    Write-Host "== Normalize Go module graph ==" -ForegroundColor Yellow
+    Invoke-NativeCommand -Command "go" -Arguments @("mod", "tidy")
+    $moduleDiff = & git diff -- go.mod go.sum
+    if ($moduleDiff) {
+        Write-Host "Go module files changed by go mod tidy (these changes should be committed):" -ForegroundColor DarkYellow
+        Write-Host ($moduleDiff -join [Environment]::NewLine)
+    }
+
     Write-Host "== Go tests ==" -ForegroundColor Yellow
     Invoke-NativeCommand -Command "go" -Arguments @("test", "./...")
 
