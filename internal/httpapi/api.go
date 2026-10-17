@@ -63,6 +63,8 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("GET /api/settings",a.dashboardAuth(http.HandlerFunc(a.settingsGet)))
 	mux.Handle("PATCH /api/settings",a.dashboardAuth(http.HandlerFunc(a.settingsPatch)))
 
+	mux.Handle("GET /api/providers",a.dashboardAuth(http.HandlerFunc(a.providersList)))
+
 	mux.Handle("GET /api/proxy-pools",a.dashboardAuth(http.HandlerFunc(a.proxyPoolsList)))
 	mux.Handle("POST /api/proxy-pools",a.dashboardAuth(http.HandlerFunc(a.proxyPoolCreate)))
 	mux.Handle("GET /api/proxy-pools/{id}",a.dashboardAuth(http.HandlerFunc(a.proxyPoolGet)))

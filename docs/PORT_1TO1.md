@@ -82,7 +82,7 @@ Each phase ends with: `go test -race ./...`, `go vet ./...`, `npm run check`, `n
 | 0 | Reference checkout, surface inventory, pin recorded, 1:1 checklist | done — checkout at `87a74e1` (v0.5.104) |
 | 1 | FE foundation: Tailwind v4 + upstream theme tokens, shell (`Sidebar`/`Header`/`DashboardLayout`) in Svelte, `/dashboard/*` routing, only in-scope nav | foundation built and checked; shell not yet wired into `App.svelte` |
 | 2 | Setting (`/dashboard/profile`) + Endpoint & Key (incl. tunnel/Tailscale) | Endpoint & Key page ported; Setting ported for Local Mode + Security only. Open: tunnel/Tailscale rows, the shared model picker, and the rest of the profile cards. |
-| 3 | Providers — OpenCode Free: list + detail, connections, model enable/disable/alias/custom, proxy pool binding, custom headers | not started |
+| 3 | Providers — OpenCode Free: list + detail, connections, model enable/disable/alias/custom, proxy pool binding, custom headers | Free Tier list, the detail header and the no-auth proxy card are ported; connections, models card, custom headers and batch test are open. |
 | 4 | Usage + pricing settings page (per-connection limits, topology, request details) | not started |
 | 5 | Token Saver (RTK filter parity re-fixtured from official, Headroom/PXPIPE lifecycle) | not started |
 | 6 | Proxy Pools (relay deploys, provider/connection binding) | not started |
@@ -175,6 +175,39 @@ Still open in this area, absent rather than faked:
 - **Network** — outbound proxy fields exist in the Go settings; the upstream card and
   `/api/settings/proxy-test` are not ported.
 - **Observability** and the shutdown action (`/api/version/shutdown`).
+
+## Providers (phase 3, in progress)
+
+Ported from the official checkout into `web/src/pages/providers/`:
+
+- **Free Tier list** (`/dashboard/providers`) — the upstream "Free Tier Providers" heading and the
+  provider card grid, restricted to the one provider in scope. The card carries the provider colour,
+  the `Ready` badge for a no-auth provider, and links to the detail page.
+- **Detail header** (`/dashboard/providers/opencode`) — back link, provider icon, name and the
+  connection count, laid out like upstream.
+- **NoAuthProxyCard** — the "No authentication required" card with the Proxy Pool selector and the
+  Rotation Strategy selector. The per-provider override is stored exactly as upstream does it, in
+  `settings.providerStrategies[providerId] = { proxyPoolId, rotateStrategy }` through
+  `PATCH /api/settings`, with the same rotation hints and the "needs at least 2 active pools" rule.
+
+New Go surface: `GET /api/providers` (`internal/httpapi/providers.go`) returns every stored
+connection with its credential fields removed, mirroring upstream's `toProviderConnectionResponse`.
+The `providerConnections` table already existed in the schema.
+
+Also carried over: the provider icon asset `public/providers/opencode.png` from the reference
+checkout, and the registry subset in `web/src/lib/providers.ts` (id, name, colour, text icon,
+`noAuth`, category `freeTier`).
+
+Still open in this area, absent rather than faked:
+
+- **Custom Headers** card — needs `GET/PUT /api/providers/{id}/overrides` plus the registry's
+  built-in header set.
+- **Models card** — available models with enable/disable, "Disable All", thinking selector,
+  suggested free models and "Add Model": needs `/api/models/disabled`, `/api/models/alias`,
+  `/api/models/custom`, `/api/models/test`.
+- **Connections** — list, add, edit, delete, bulk import, per-connection proxy pool binding and
+  cooldown display (`/api/providers` POST/PUT/DELETE already have an upstream contract to match).
+- **Batch actions** — "Test All" and `/api/providers/test-batch`.
 
 ## Rules
 

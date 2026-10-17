@@ -3,6 +3,8 @@
   import DashboardLayout from "./shell/DashboardLayout.svelte";
   import EndpointPage from "./pages/endpoint/EndpointPage.svelte";
   import ProfilePage from "./pages/profile/ProfilePage.svelte";
+  import ProvidersPage from "./pages/providers/ProvidersPage.svelte";
+  import ProviderDetailPage from "./pages/providers/ProviderDetailPage.svelte";
   import { navigate, route } from "./lib/router.svelte";
 
   type Section = "Endpoint & Key" | "Providers" | "Usage" | "Token Saver" | "Console Log" | "Settings" | "Proxypools";
@@ -33,6 +35,7 @@
   }
 
   const active = $derived(sectionFromPath(route.path));
+  const providerIdFromPath = $derived(/^\/dashboard\/providers\/([^/]+)$/.exec(route.path)?.[1] ?? "");
   let authenticated = $state(false);
   let loginRequired = $state(true);
   let hasPassword = $state(false);
@@ -41,9 +44,6 @@
   let actionError = $state("");
   let successMessage = $state("");
   let busy = $state(false);
-  let probeKey = $state("");
-  let models = $state<any[]>([]);
-  let modelProbeMessage = $state("");
   let settings = $state<Record<string, any>>({});
   let stats = $state<Stats>({});
   let chart = $state<ChartPoint[]>([]);
@@ -103,35 +103,17 @@
     authenticated = false;
     loginRequired = true;
     settings = {};
-    models = [];
     pools = [];
   }
   async function refreshSection(section: Section) {
     actionError = "";
     try {
-      // Endpoint & Key and Setting own their data: those pages load what they need themselves.
-      if (section === "Providers") await loadModels();
+      // Endpoint & Key, Providers and Setting own their data: those pages load what they need themselves.
       if (section === "Usage") await loadUsage();
       if (section === "Token Saver") await loadSettings();
       if (section === "Console Log") await openConsoleStream();
       if (section === "Proxypools") await loadPools();
     } catch (error) { actionError = error instanceof Error ? error.message : "Could not load this section"; }
-  }
-  async function copy(text: string) {
-    try { await navigator.clipboard.writeText(text); successMessage = "Copied to clipboard"; }
-    catch { actionError = "Clipboard access was denied by the browser"; }
-  }
-  async function loadModels() {
-    modelProbeMessage = "Checking OpenCode model catalogue…";
-    const response = await fetch("/v1/models", { headers: probeKey ? { Authorization: "Bearer " + probeKey } : {}, cache: "no-store" });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      modelProbeMessage = (result && result.error && result.error.message) || result.error || ("Model discovery failed: HTTP " + response.status);
-      models = [];
-      return;
-    }
-    models = result.data || [];
-    modelProbeMessage = models.length + " model(s) discovered";
   }
   async function loadSettings() { settings = await request("/api/settings"); }
   async function saveSetting(key: string, value: any) {
@@ -223,8 +205,13 @@
   });
 
   onMount(() => {
+    // Deep links (e.g. /dashboard/providers/opencode) are valid: match a section path or a path below it.
+    const pathname = window.location.pathname;
     const known = [...(Object.values(sectionPaths) as string[]), "/dashboard", "/"];
-    if (!known.includes(window.location.pathname)) navigate(sectionPaths["Endpoint & Key"], true);
+    const isKnown = known.some((path) =>
+      path === "/" ? pathname === "/" : pathname === path || pathname.startsWith(path + "/"),
+    );
+    if (!isKnown) navigate(sectionPaths["Endpoint & Key"], true);
     void checkSession();
     return () => { stopConsoleStream(); };
   });
@@ -239,14 +226,11 @@
   {#if active === "Endpoint & Key"}
     <EndpointPage />
   {:else if active === "Providers"}
-    <div class="panel provider-card"><div class="provider-logo">oc</div><div class="provider-info"><div class="provider-title"><h2>OpenCode Free</h2><span class="pill good">INITIAL PROVIDER</span></div><p>Public model prefix <code>oc/</code>. Requests are translated to native upstream model IDs.</p><div class="provider-meta"><span><i class="status-dot online"></i> Dynamic model catalogue</span><span>Source: opencode.ai/zen/v1/models</span></div></div><button class="button subtle" onclick={loadModels}>Refresh models</button></div>
-    <div class="panel endpoint-panel">
-      <div class="panel-heading"><h2>Model catalogue</h2><span class="pill">{models.length} models</span></div>
-      <label class="field-label" for="provider-key">Client API key <span>Only required when requireApiKey is enabled</span></label>
-      <div class="inline-form"><input id="provider-key" type="password" bind:value={probeKey} placeholder="sk-…" autocomplete="off" /><button class="button primary" onclick={loadModels}>Load models</button></div>
-      <p class="muted">{modelProbeMessage}</p>
-      <div class="model-list">{#each models as model (model.id)}<div class="model-item"><code>{model.id}</code><button class="button subtle" onclick={() => copy(model.id)}>Copy ID</button></div>{/each}</div>
-    </div>
+    {#if providerIdFromPath}
+      <ProviderDetailPage providerId={providerIdFromPath} />
+    {:else}
+      <ProvidersPage />
+    {/if}
   {:else if active === "Usage"}
     <div class="toolbar"><label>Period <select bind:value={period} onchange={() => changePeriod(period)}><option value="today">Today</option><option value="24h">Last 24 hours</option><option value="7d">7 days</option><option value="30d">30 days</option><option value="60d">60 days</option><option value="all">All time</option></select></label><button class="button subtle" onclick={loadUsage}>Refresh</button></div>
     <div class="stat-grid">
