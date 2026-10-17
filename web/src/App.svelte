@@ -36,6 +36,9 @@
   let keyName = "My coding client";
   let newKeyValue = "";
   let showCreatedKey = false;
+  let editingAccessKeyId = "";
+  let accessRestricted = false;
+  let accessListText = "";
   let settings: Record<string, any> = {};
   let currentPassword = "";
   let newPassword = "";
@@ -153,6 +156,30 @@
     if (!window.confirm("Delete API key " + key.name + "? Existing clients using it will stop working.")) return;
     try { await request("/api/keys/" + encodeURIComponent(key.id), { method: "DELETE" }); await loadKeys(); }
     catch (error) { actionError = error instanceof Error ? error.message : "Could not delete key"; }
+  }
+  function editKeyAccess(key: APIKey) {
+    if (editingAccessKeyId === key.id) {
+      editingAccessKeyId = "";
+      return;
+    }
+    editingAccessKeyId = key.id;
+    accessRestricted = Boolean(key.access?.restricted);
+    accessListText = (key.access?.allow || []).join("\n");
+  }
+  async function saveKeyAccess(key: APIKey) {
+    actionError = "";
+    try {
+      const allow = accessListText.split(/[\n,]/g).map(value => value.trim()).filter(Boolean);
+      await request("/api/keys/" + encodeURIComponent(key.id), {
+        method: "PUT",
+        body: JSON.stringify({ access: { restricted: accessRestricted, allow } })
+      });
+      await loadKeys();
+      editingAccessKeyId = "";
+      successMessage = accessRestricted ? "Model allow-list saved" : "API key now has unrestricted model access";
+    } catch (error) {
+      actionError = error instanceof Error ? error.message : "Could not update model access";
+    }
   }
   async function copy(text: string) {
     try { await navigator.clipboard.writeText(text); successMessage = "Copied to clipboard"; }
@@ -347,8 +374,17 @@
                 <div class="key-info"><strong>{key.name || "Unnamed key"}</strong><small><code>{key.key}</code></small><small>Created {key.createdAt || "date unavailable"} · {key.access?.restricted ? "Restricted to " + (key.access.allow || []).join(", ") : "Unrestricted access"}</small></div>
                 <span class:good={key.isActive} class="pill">{key.isActive ? "ACTIVE" : "DISABLED"}</span>
                 <button class="button subtle" onclick={() => copy(key.key)}>Copy</button>
+                <button class="button subtle" onclick={() => editKeyAccess(key)}>{editingAccessKeyId === key.id ? "Close access" : "Access"}</button>
                 <button class="button subtle" onclick={() => toggleKey(key)}>{key.isActive ? "Disable" : "Enable"}</button>
                 <button class="button danger" onclick={() => deleteKey(key)}>Delete</button>
+                {#if editingAccessKeyId === key.id}
+                  <div class="access-editor">
+                    <label class="access-toggle"><input type="checkbox" bind:checked={accessRestricted} /> Restrict this key to an explicit model allow-list</label>
+                    <label class="field"><span>Allowed model IDs</span><textarea rows="4" bind:value={accessListText} placeholder="oc/model-id\none-model-id"></textarea></label>
+                    <small>One model ID per line (commas are also accepted). An unrestricted key ignores this list. A restricted key with an empty list cannot call any model.</small>
+                    <button class="button primary" onclick={() => saveKeyAccess(key)}>Save access policy</button>
+                  </div>
+                {/if}
               </div>
             {/each}
             {#if keys.length === 0}<p class="muted">No managed keys created yet. Environment-configured keys may appear after the first API request.</p>{/if}
