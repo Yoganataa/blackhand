@@ -139,8 +139,8 @@ try {
             $failure = "Executable smoke test failed: /readyz did not return HTTP 200."
         }
         else {
-            $home = Invoke-WebRequest -Uri ("http://127.0.0.1:" + $port + "/") -TimeoutSec 5
-            if ($home.StatusCode -ne 200 -or $home.Content -notmatch "Blackhand") {
+            $homeResponse = Invoke-WebRequest -Uri ("http://127.0.0.1:" + $port + "/") -TimeoutSec 5
+            if ($homeResponse.StatusCode -ne 200 -or $homeResponse.Content -notmatch "Blackhand") {
                 $failure = "Executable smoke test failed: homepage was not served as expected."
             }
         }
