@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -63,9 +64,17 @@ func testRelay(ctx context.Context,relayURL string,started time.Time)proxyTestRe
 	if !result.OK{result.Error=fmt.Sprintf("Relay test failed with status %d",res.StatusCode)}
 	return result
 }
-func safeError(err error)string{
-	value:=err.Error()
-	if len(value)>500{value=value[:500]}
-	// Avoid echoing proxy credentials that may be embedded in a URL.
+var (
+	urlUserInfoPattern = regexp.MustCompile(`(?i)(https?://)[^/\\s@]+@`)
+	sensitiveQueryPattern = regexp.MustCompile(`(?i)([?&](?:password|passwd|token|api[_-]?key|secret)=)[^&#\\s"'<>]+`)
+)
+
+func safeError(err error) string {
+	value := err.Error()
+	value = urlUserInfoPattern.ReplaceAllString(value, "${1}[redacted]@")
+	value = sensitiveQueryPattern.ReplaceAllString(value, "${1}[redacted]")
+	if len(value) > 500 {
+		value = value[:500]
+	}
 	return value
 }
