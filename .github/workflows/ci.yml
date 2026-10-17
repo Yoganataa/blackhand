@@ -20,6 +20,7 @@ jobs:
       - run: go mod tidy
       - run: go test ./...
       - run: go vet ./...
+
   web:
     runs-on: ubuntu-latest
     steps:
@@ -33,3 +34,37 @@ jobs:
         working-directory: web
       - run: npm run build
         working-directory: web
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: go mod tidy
+      - run: npm install && npm run build
+        working-directory: web
+      - run: |
+          rm -rf internal/httpapi/assets
+          mkdir -p internal/httpapi/assets bin
+          cp -R web/dist/. internal/httpapi/assets/
+          go build -trimpath -ldflags="-s -w" -o bin/blackhand ./cmd/blackhand
+      - name: Smoke-test bundled executable
+        run: |
+          set -eu
+          DATA_DIR="$(mktemp -d)"
+          HOST=127.0.0.1 PORT=20991 DATA_DIR="$DATA_DIR" ./bin/blackhand &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; rm -rf "$DATA_DIR"' EXIT
+          READY=0
+          for i in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:20991/readyz >/dev/null; then READY=1; break; fi
+            sleep 0.25
+          done
+          test "$READY" -eq 1
+          curl --fail --silent http://127.0.0.1:20991/ | grep -q 'Blackhand'
