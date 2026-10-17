@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -365,32 +366,127 @@ func filterGitLog(input string) string {
 	if len(out) >= len(lines) { return input }
 	return strings.Join(out, "\n")
 }
+var (
+	cargoErrorContinuation = regexp.MustCompile(`^\\s*(-->|\\||\\d+\\s*\\||=)`)
+	buildCountSummary = regexp.MustCompile(`^(added|removed|changed|audited|installed)\\s+\\d+\\s+package`)
+	buildSimpleSummary = regexp.MustCompile(`^\\d+\\s+(vulnerabilities|packages?|warnings?|errors?)`)
+	buildAddressSummary = regexp.MustCompile(`^To address .* issues`)
+	buildNpmCommandSummary = regexp.MustCompile("` + "`" + `^Run \\`npm (audit|fund)\\`` + "`" + `)
+)
+
 func filterBuildOutput(input string) string {
-	lines := strings.Split(input, "\n")
-	out := []string{}
-	omitted := 0
-	for _, line := range lines {
-		t := strings.TrimSpace(line)
-		lower := strings.ToLower(t)
-		if t == "" { continue }
-		if strings.Contains(lower, "error") || strings.Contains(lower, "failed") ||
-			strings.Contains(lower, "warning") || strings.Contains(lower, "success") ||
-			strings.Contains(lower, "finished") || strings.Contains(lower, "built") ||
-			strings.Contains(lower, "test passed") || strings.HasPrefix(t, "FAIL") {
-			out = append(out, line)
-		} else if strings.HasPrefix(lower, "compiling ") || strings.HasPrefix(lower, "downloading ") ||
-			strings.HasPrefix(lower, "fetching ") || strings.HasPrefix(lower, "checking ") {
-			omitted++
-		} else if len(out) < 30 {
-			out = append(out, line)
-		} else {
-			omitted++
+	// Ported from Yoganataa/9router open-sse/rtk/filters/buildOutput.js
+	// at db6112897399ac981ca73ed573d14102e84ca0f1. Keep the grouping/order
+	// stable so the fixture tests protect byte-for-byte compatibility here.
+	errorsOut := []string{}
+	warnings := []string{}
+	deprecations := []string{}
+	summary := []string{}
+	compilingCount, downloadingCount := 0, 0
+	inCargoError := false
+
+	for _, line := range strings.Split(input, "\\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+
+		if inCargoError {
+			if trimmed == "" {
+				inCargoError = false
+				continue
+			}
+			if cargoErrorContinuation.MatchString(line) {
+				errorsOut = append(errorsOut, line)
+				continue
+			}
+			inCargoError = false
+		}
+		if trimmed == "" {
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(lower, "npm err!") || strings.HasPrefix(lower, "npm error") || strings.HasPrefix(lower, "yarn error"):
+			errorsOut = append(errorsOut, line)
+			continue
+		case strings.HasPrefix(lower, "npm warn deprecated"):
+			deprecations = append(deprecations, line)
+			continue
+		case strings.HasPrefix(lower, "npm warn") || strings.HasPrefix(lower, "yarn warn"):
+			warnings = append(warnings, line)
+			continue
+		case strings.HasPrefix(lower, "error[") || strings.HasPrefix(lower, "error:") || strings.HasPrefix(lower, "error -->"):
+			errorsOut = append(errorsOut, line)
+			inCargoError = true
+			continue
+		case strings.HasPrefix(lower, "warning[") || strings.HasPrefix(lower, "warning:") || strings.HasPrefix(lower, "warning -->"):
+			warnings = append(warnings, line)
+			inCargoError = true
+			continue
+		case strings.HasPrefix(lower, "error:"):
+			errorsOut = append(errorsOut, line)
+			continue
+		case strings.HasPrefix(lower, "[error]") || strings.HasPrefix(lower, "build failed"):
+			errorsOut = append(errorsOut, line)
+			continue
+		case strings.HasPrefix(lower, "[warning]"):
+			warnings = append(warnings, line)
+			continue
+		case strings.HasPrefix(lower, "compiling ") && hasBuildTokenAfterPrefix(trimmed, "compiling "):
+			compilingCount++
+			continue
+		case strings.HasPrefix(lower, "downloading ") && hasBuildTokenAfterPrefix(trimmed, "downloading "):
+			downloadingCount++
+			continue
+		case strings.HasPrefix(lower, "fetching "):
+			downloadingCount++
+			continue
+		case buildCountSummary.MatchString(lower) || strings.HasPrefix(lower, "finished ") ||
+			strings.HasPrefix(lower, "build success") || strings.HasPrefix(lower, "successfully installed") ||
+			strings.HasPrefix(lower, "successfully built") || buildSimpleSummary.MatchString(lower) ||
+			buildAddressSummary.MatchString(trimmed) || buildNpmCommandSummary.MatchString(trimmed) ||
+			strings.Contains(lower, "packages are looking for funding"):
+			summary = append(summary, line)
+			continue
 		}
 	}
-	if omitted > 0 { out = append(out, fmt.Sprintf("... %d routine build lines omitted", omitted)) }
-	if len(out) == 0 || len(strings.Join(out, "\n")) >= len(input) { return input }
-	return strings.Join(out, "\n")
+
+	out := []string{}
+	for i, line := range deprecations {
+		if i >= 3 {
+			break
+		}
+		out = append(out, line)
+	}
+	if len(deprecations) > 3 {
+		out = append(out, fmt.Sprintf("... +%d more deprecated packages", len(deprecations)-3))
+	}
+	if compilingCount > 0 {
+		out = append(out, fmt.Sprintf("Compiled %d packages", compilingCount))
+	}
+	if downloadingCount > 0 {
+		out = append(out, fmt.Sprintf("Downloaded %d packages", downloadingCount))
+	}
+	out = append(out, errorsOut...)
+	for i, line := range warnings {
+		if i >= 5 {
+			break
+		}
+		out = append(out, line)
+	}
+	if len(warnings) > 5 {
+		out = append(out, fmt.Sprintf("... +%d more warnings", len(warnings)-5))
+	}
+	out = append(out, summary...)
+	if len(out) == 0 {
+		return input
+	}
+	return strings.Join(out, "\\n")
 }
+
+func hasBuildTokenAfterPrefix(line, prefix string) bool {
+	return len(strings.TrimSpace(strings.TrimPrefix(strings.ToLower(line), prefix))) > 0
+}
+
 func looksLikeGrep(input string) bool {
 	lines := strings.Split(strings.TrimSpace(input), "\n")
 	if len(lines) < 3 { return false }
