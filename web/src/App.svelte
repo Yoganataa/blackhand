@@ -385,9 +385,14 @@
 
   <main class="main">
     <header class="topbar">
-      <div class="breadcrumbs"><span>9Router</span><span class="slash">/</span><strong>{active === "Endpoint & Key" ? "Endpoint" : active === "Proxypools" ? "Proxy Pools" : active}</strong></div>
+      <div class="header-page-info">
+        <div class="header-title-row">
+          <span class="material-symbols-outlined header-page-icon">{sections.find(s => s.name === active)?.icon || "hub"}</span>
+          <h1>{active === "Endpoint & Key" ? "Endpoint" : active === "Proxypools" ? "Proxy Pools" : active}</h1>
+        </div>
+        <p>{sections.find(s => s.name === active)?.description}</p>
+      </div>
       <div class="top-actions">
-        <span class="version-chip">GO BUILD</span>
         <button class="icon-button" aria-label="Toggle theme" title={darkTheme ? "Switch to light theme" : "Switch to dark theme"} onclick={toggleTheme}><span class="material-symbols-outlined">{darkTheme ? "light_mode" : "dark_mode"}</span></button>
         <button class="icon-button" aria-label="Refresh section" title="Refresh section" onclick={() => refreshSection(active)}><span class="material-symbols-outlined">refresh</span></button>
         {#if authenticated}<button class="button subtle" onclick={logout}>Sign out</button>{/if}
@@ -396,10 +401,6 @@
     </header>
 
     <section class="content">
-      <div class="page-head">
-        <div><div class="eyebrow">9ROUTER / BLACKHAND PORT</div><h1>{active === "Endpoint & Key" ? "Endpoint" : active === "Proxypools" ? "Proxy Pools" : active}</h1><p>{sections.find(s => s.name === active)?.description}</p></div>
-        <button class="button subtle" onclick={() => refreshSection(active)}><span class="material-symbols-outlined">refresh</span> Refresh</button>
-      </div>
 
       {#if actionError}<div class="message error">{actionError}</div>{/if}
       {#if successMessage}<div class="message success">{successMessage}</div>{/if}

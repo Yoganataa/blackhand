@@ -270,3 +270,25 @@ input[type=checkbox] { width: 35px; min-width: 35px; min-height: 19px; height: 1
 .access-toggle { color: var(--text-main,#171717); }
 .error-text { color: var(--danger,#cf222e) !important; }
 .dark .created-key strong, .dark .created-key code, .dark .notice strong, .dark .access-toggle { color: var(--text-main,#ededed); }
+
+
+/* Mirror 9Router's header: page identity in the header, not duplicated in content */
+.topbar {
+  min-height: 72px;
+  height: auto;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.header-page-info { display: flex; flex: 1 1 auto; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; }
+.header-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.header-page-info h1 { margin: 0; overflow: hidden; color: var(--text-main,#171717); font-size: 21px; font-weight: 650; letter-spacing: -.55px; line-height: 1.28; text-overflow: ellipsis; white-space: nowrap; }
+.header-page-icon { flex: 0 0 auto; color: var(--accent); font-size: 23px; }
+.header-page-info p { overflow: hidden; margin: 0; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.dark .header-page-info h1 { color: #ededed; }
+@media(max-width:760px) {
+  .topbar { min-height: 54px; height: 54px; padding-top: 0; padding-bottom: 0; }
+  .header-page-info { flex: 1 1 auto; }
+  .header-page-info h1 { font-size: 15px; }
+  .header-page-icon { font-size: 20px; }
+  .header-page-info p { display: none; }
+}
