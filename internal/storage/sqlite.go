@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -21,6 +22,12 @@ import (
 type Store struct {
 	DB      *sql.DB
 	DataDir string
+
+	// usageWriteMu serializes usage transactions within the process. SQLite
+	// only permits one writer at a time; without this, concurrent deferred
+	// transactions can all read the same rollup and then fail while upgrading
+	// their read transaction to a write transaction.
+	usageWriteMu sync.Mutex
 }
 
 const schemaVersion = "2"
