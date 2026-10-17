@@ -1,0 +1,39 @@
+Compiling synthetic-crate-01 v1.0.0
+Compiling synthetic-crate-02 v1.0.0
+Compiling synthetic-crate-03 v1.0.0
+Compiling synthetic-crate-04 v1.0.0
+Compiling synthetic-crate-05 v1.0.0
+Compiling synthetic-crate-06 v1.0.0
+Compiling synthetic-crate-07 v1.0.0
+Compiling synthetic-crate-08 v1.0.0
+Compiling synthetic-crate-09 v1.0.0
+Compiling synthetic-crate-10 v1.0.0
+Compiling synthetic-crate-11 v1.0.0
+Compiling synthetic-crate-12 v1.0.0
+Compiling synthetic-crate-13 v1.0.0
+Compiling synthetic-crate-14 v1.0.0
+Downloading synthetic-package-01
+Downloading synthetic-package-02
+Downloading synthetic-package-03
+Downloading synthetic-package-04
+Downloading synthetic-package-05
+Downloading synthetic-package-06
+Downloading synthetic-package-07
+Downloading synthetic-package-08
+npm warn deprecated old-alpha@1.0.0: use maintained package
+npm warn deprecated old-beta@1.0.0: use maintained package
+npm warn deprecated old-gamma@1.0.0: use maintained package
+npm warn deprecated old-delta@1.0.0: use maintained package
+warning: retain this non-fatal warning
+error[E0425]: cannot find value `missing` in this scope
+ --> src/main.rs:3:4
+  |
+3 | missing
+  | ^^^^^^^
+
+warning: second warning
+warning: third warning
+warning: fourth warning
+warning: fifth warning
+warning: sixth warning
+Finished release [optimized] target(s) in 2.1s
