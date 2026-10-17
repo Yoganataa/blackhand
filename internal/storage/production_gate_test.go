@@ -202,6 +202,97 @@ func TestUpstreamShapedSchemaFixtureMigrationBackupAndRestore(t *testing.T) {
 
 const schemaVersionExpectedForTest = "2"
 
+func TestSchemaV1WithAccessColumnsStillBacksUpAndPreservesData(t *testing.T) {
+	t.Setenv("NINEROUTER_API_KEY", "")
+	dataDir := filepath.Join(t.TempDir(), "source")
+	dbPath := filepath.Join(dataDir, "db", "data.sqlite")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(filepath.Join("testdata", "9router-schema-v1.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(string(fixture)); err != nil {
+		_ = db.Close()
+		t.Fatalf("load sanitized schema fixture: %v", err)
+	}
+
+	// Match a real 9Router database where additive API-key columns already
+	// exist even though _meta.schemaVersion has not yet been advanced.
+	if _, err := db.Exec("ALTER TABLE apiKeys ADD COLUMN accessRestricted INTEGER DEFAULT 0"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("ALTER TABLE apiKeys ADD COLUMN accessAllow TEXT"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE _meta SET value='1' WHERE key='schemaVersion'"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(dataDir)
+	if err != nil {
+		t.Fatalf("migrate schema-v1 database with current columns: %v", err)
+	}
+	verifyFixtureRows(t, store.DB)
+	var schemaVersion string
+	if err := store.DB.QueryRow("SELECT value FROM _meta WHERE key='schemaVersion'").Scan(&schemaVersion); err != nil {
+		t.Fatal(err)
+	}
+	if schemaVersion != schemaVersionExpectedForTest {
+		t.Fatalf("schemaVersion after migration = %q, want %s", schemaVersion, schemaVersionExpectedForTest)
+	}
+	var restricted int
+	var allow sql.NullString
+	if err := store.DB.QueryRow("SELECT accessRestricted, accessAllow FROM apiKeys WHERE id='fixture-key-id'").Scan(&restricted, &allow); err != nil {
+		t.Fatal(err)
+	}
+	if restricted != 0 || allow.Valid {
+		t.Fatalf("existing key access settings changed: restricted=%d allowPresent=%v", restricted, allow.Valid)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	backupDir := filepath.Join(dataDir, "db", "backups")
+	backups, err := os.ReadDir(backupDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) == 0 {
+		t.Fatal("schema-version reconciliation did not create a pre-change backup")
+	}
+	backupDB, err := sql.Open("sqlite", filepath.Join(backupDir, backups[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backupDB.Close()
+	verifyFixtureRows(t, backupDB)
+	for _, column := range []string{"accessRestricted", "accessAllow"} {
+		if exists, err := columnExists(context.Background(), backupDB, "apiKeys", column); err != nil {
+			t.Fatal(err)
+		} else if !exists {
+			t.Fatalf("pre-migration backup lost existing column %s", column)
+		}
+	}
+	if err := backupDB.QueryRow("SELECT value FROM _meta WHERE key='schemaVersion'").Scan(&schemaVersion); err != nil {
+		t.Fatal(err)
+	}
+	if schemaVersion != "1" {
+		t.Fatalf("backup schemaVersion = %q, want original version 1", schemaVersion)
+	}
+}
+
 func TestConcurrentUsageWritesKeepHistoryAndDailyRollupsConsistent(t *testing.T) {
 	t.Setenv("NINEROUTER_API_KEY", "")
 	store, err := Open(filepath.Join(t.TempDir(), "data"))
