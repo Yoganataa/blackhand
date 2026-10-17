@@ -3,9 +3,41 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#111318" />
-    <meta name="description" content="Blackhand — a Go-first AI router" />
+    <meta name="theme-color" content="#1a1a1a" />
+    <meta name="description" content="Blackhand — AI infrastructure management" />
     <title>Blackhand</title>
+    <!-- Apply the persisted theme before first paint so a reload does not flash the light theme.
+         Mirrors the stored theme shape used by the shell theme store. -->
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem("theme");
+          var theme = "system";
+          if (raw) {
+            try {
+              var parsed = JSON.parse(raw);
+              theme = (parsed && parsed.state && parsed.state.theme) || parsed || "system";
+            } catch (e) {
+              theme = raw;
+            }
+          }
+          if (typeof theme !== "string") theme = "system";
+          var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          if (theme === "dark" || (theme !== "light" && prefersDark)) {
+            document.documentElement.classList.add("dark");
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <script>
+      (function () {
+        var d = document, r = d.documentElement, f = function () { r.classList.add("fonts-loaded"); };
+        if (d.fonts && d.fonts.load) {
+          d.fonts.load('24px "Material Symbols Outlined"').then(f).catch(f);
+          setTimeout(f, 3000);
+        } else { f(); }
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>
