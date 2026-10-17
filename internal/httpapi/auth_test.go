@@ -69,6 +69,34 @@ func TestLoginLimiterBoundsIPCardinality(t *testing.T) {
 	}
 }
 
+func TestLoginLimiterPreservesActiveLockoutsAtCapacity(t *testing.T) {
+	limiter := newLoginLimiter()
+	now := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
+
+	limiter.Lock()
+	for i := 0; i < maxLoginLimitEntries; i++ {
+		ip := "locked-ip-" + strconv.Itoa(i)
+		limiter.entries[ip] = loginAttempt{LockedUntil: now.Add(loginLockDuration + time.Duration(i)*time.Second), LastSeen: now}
+	}
+	limiter.Unlock()
+
+	allowed, retry := limiter.allow("new-ip", now)
+	if allowed {
+		t.Fatal("new IP should be throttled when all bounded slots are active lockouts")
+	}
+	if retry != loginLockDuration {
+		t.Fatalf("retry should match the earliest unlock, got %s", retry)
+	}
+	limiter.Lock()
+	defer limiter.Unlock()
+	if _, exists := limiter.entries["locked-ip-0"]; !exists {
+		t.Fatal("active lockout was evicted to make room")
+	}
+	if len(limiter.entries) != maxLoginLimitEntries {
+		t.Fatalf("entry cap changed unexpectedly: got %d", len(limiter.entries))
+	}
+}
+
 func TestLoginLimiterConcurrentAccess(t *testing.T) {
 	limiter := newLoginLimiter()
 	now := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
