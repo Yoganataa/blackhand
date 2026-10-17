@@ -98,8 +98,7 @@ func(p *Provider)ProxyChatWithProxy(w http.ResponseWriter,r *http.Request,proxyU
 		flusher,canFlush:=w.(http.Flusher)
 		reader:=bufio.NewReaderSize(resp.Body,32*1024)
 		for{
-			line,readErr:=reader.ReadBytes('
-')
+			line,readErr:=reader.ReadBytes('\n')
 			if len(line)>0{
 				if bytes.HasPrefix(bytes.TrimSpace(line),[]byte("data:")){parseSSEUsage(line,result.Usage)}
 				if _,writeErr:=w.Write(line);writeErr!=nil{return result}
