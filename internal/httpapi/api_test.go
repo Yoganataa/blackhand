@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"database/sql"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -144,4 +145,79 @@ func TestProxyPoolManagementHTTPRoutes(t *testing.T) {
 
 	deleted := authenticatedRequest(t, a, cookie, http.MethodDelete, "/api/proxy-pools/"+result.ProxyPool.ID, "")
 	if deleted.Code != http.StatusOK { t.Fatalf("delete pool returned %d: %s", deleted.Code, deleted.Body.String()) }
+}
+
+
+func TestSanitizedExistingDatabaseKeyAuthenticatesThroughClientMiddleware(t *testing.T) {
+	t.Setenv("NINEROUTER_API_KEY", "")
+	t.Setenv("INITIAL_PASSWORD", "fixture-only-password")
+	dataDir := filepath.Join(t.TempDir(), "data")
+	dbPath := filepath.Join(dataDir, "db", "data.sqlite")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(filepath.Join("..", "storage", "testdata", "supplied-db-shape-v1.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rawDB.Exec(string(fixture)); err != nil {
+		_ = rawDB.Close()
+		t.Fatalf("load sanitized database fixture: %v", err)
+	}
+	if err := rawDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := storage.Open(dataDir)
+	if err != nil {
+		t.Fatalf("open sanitized database fixture: %v", err)
+	}
+	defer store.Close()
+	a := New(config.Config{}, store, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
+	var nextCalled bool
+	var resolvedKey string
+	gate := a.withClientKey(func(w http.ResponseWriter, r *http.Request, key *storage.APIKey, presented string) {
+		nextCalled = true
+		if key == nil {
+			t.Error("client middleware called next without resolving a database key")
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		resolvedKey = key.Key
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	missing := httptest.NewRecorder()
+	gate.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	if missing.Code != http.StatusUnauthorized {
+		t.Fatalf("request without API key returned %d, want 401", missing.Code)
+	}
+	if nextCalled {
+		t.Fatal("client middleware allowed request without a required key")
+	}
+
+	const fixtureKey = "sk-blackhand-fixture-key-never-use"
+	valid := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	valid.Header.Set("Authorization", "Bearer "+fixtureKey)
+	validRec := httptest.NewRecorder()
+	gate.ServeHTTP(validRec, valid)
+	if validRec.Code != http.StatusNoContent {
+		t.Fatalf("active stored API key returned %d, want middleware to allow request; body=%s", validRec.Code, validRec.Body.String())
+	}
+	if !nextCalled || resolvedKey != fixtureKey {
+		t.Fatal("active fixture API key was not resolved by the real client-key middleware")
+	}
+
+	invalid := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	invalid.Header.Set("Authorization", "Bearer invalid-fixture-key")
+	invalidRec := httptest.NewRecorder()
+	gate.ServeHTTP(invalidRec, invalid)
+	if invalidRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unknown API key returned %d, want 401", invalidRec.Code)
+	}
 }
