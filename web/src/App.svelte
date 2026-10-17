@@ -1,24 +1,17 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import DashboardLayout from "./shell/DashboardLayout.svelte";
+  import { navigate, route } from "./lib/router.svelte";
 
-  type Section = "Overview" | "Endpoint & Key" | "Providers" | "Usage" | "Token Saver" | "Console Log" | "Settings" | "Proxypools";
+  type Section = "Endpoint & Key" | "Providers" | "Usage" | "Token Saver" | "Console Log" | "Settings" | "Proxypools";
   type APIKey = { id: string; key: string; name: string; isActive: boolean; createdAt?: string; access?: { restricted: boolean; allow: string[] } };
   type ProxyPool = { id: string; name: string; proxyUrl: string; noProxy?: string; type: string; isActive: boolean; strictProxy?: boolean; testStatus?: string; lastError?: string; boundConnectionCount?: number };
   type Stats = { totalRequests?: number; totalPromptTokens?: number; totalCompletionTokens?: number; totalCachedTokens?: number; totalCost?: number; byProvider?: Record<string, any>; recentRequests?: any[]; activeRequests?: any[]; last10Minutes?: any[] };
   type ChartPoint = { label: string; tokens: number; cost: number; requests: number };
 
-  const sections: { name: Section; label?: string; icon: string; description: string; group?: "system" }[] = [
-    { name: "Endpoint & Key", label: "Endpoint & Key", icon: "api", description: "API endpoint configuration and access keys" },
-    { name: "Providers", label: "Providers", icon: "dns", description: "Manage configured AI provider connections" },
-    { name: "Usage", label: "Usage", icon: "bar_chart", description: "Monitor requests, token consumption and history" },
-    { name: "Token Saver", label: "Token Saver", icon: "savings", description: "Compress tool output and reduce prompt tokens" },
-    { name: "Proxypools", label: "Proxy Pools", icon: "lan", description: "Manage outbound proxy pool configurations", group: "system" },
-    { name: "Console Log", label: "Console Log", icon: "terminal", description: "Live server console output", group: "system" },
-    { name: "Settings", label: "Settings", icon: "settings", description: "Manage access, runtime and network preferences", group: "system" }
-  ];
-
+  // Upstream paths per ported area (docs/PORT_1TO1.md). The shell sidebar owns the navigation;
+  // this only maps the current URL to the area whose data must load.
   const sectionPaths: Record<Section, string> = {
-    "Overview": "/dashboard/overview",
     "Endpoint & Key": "/dashboard/endpoint",
     "Providers": "/dashboard/providers",
     "Usage": "/dashboard/usage",
@@ -28,47 +21,51 @@
     "Proxypools": "/dashboard/proxy-pools"
   };
   function sectionFromPath(pathname: string): Section {
-    const matched = (Object.entries(sectionPaths) as [Section, string][]).find(([, path]) => path === pathname);
+    if (pathname === "/" || pathname === "/dashboard") return "Endpoint & Key";
+    const matched = (Object.entries(sectionPaths) as [Section, string][]).find(([, path]) => pathname.startsWith(path));
     return matched?.[0] || "Endpoint & Key";
   }
+  function pageTitle(section: Section): string {
+    if (section === "Endpoint & Key") return "Endpoint";
+    if (section === "Proxypools") return "Proxy Pools";
+    return section;
+  }
 
-  let active: Section = "Endpoint & Key";
-  let health: "checking" | "online" | "offline" = "checking";
-  let authenticated = false;
-  let loginRequired = true;
-  let hasPassword = false;
-  let password = "";
-  let authError = "";
-  let actionError = "";
-  let successMessage = "";
-  let busy = false;
-  let darkTheme = false;
-  let visibleKeys = new Set<string>();
-  let endpoint = window.location.origin + "/v1";
-  let probeKey = "";
-  let models: any[] = [];
-  let modelProbeMessage = "";
-  let keys: APIKey[] = [];
-  let keyName = "My coding client";
-  let newKeyValue = "";
-  let showCreatedKey = false;
-  let editingAccessKeyId = "";
-  let accessRestricted = false;
-  let accessListText = "";
-  let settings: Record<string, any> = {};
-  let currentPassword = "";
-  let newPassword = "";
-  let stats: Stats = {};
-  let chart: ChartPoint[] = [];
-  let period = "7d";
-  let logs: string[] = [];
+  const active = $derived(sectionFromPath(route.path));
+  let authenticated = $state(false);
+  let loginRequired = $state(true);
+  let hasPassword = $state(false);
+  let password = $state("");
+  let authError = $state("");
+  let actionError = $state("");
+  let successMessage = $state("");
+  let busy = $state(false);
+  let visibleKeys = $state(new Set<string>());
+  let endpoint = $state(window.location.origin + "/v1");
+  let probeKey = $state("");
+  let models = $state<any[]>([]);
+  let modelProbeMessage = $state("");
+  let keys = $state<APIKey[]>([]);
+  let keyName = $state("My coding client");
+  let newKeyValue = $state("");
+  let showCreatedKey = $state(false);
+  let editingAccessKeyId = $state("");
+  let accessRestricted = $state(false);
+  let accessListText = $state("");
+  let settings = $state<Record<string, any>>({});
+  let currentPassword = $state("");
+  let newPassword = $state("");
+  let stats = $state<Stats>({});
+  let chart = $state<ChartPoint[]>([]);
+  let period = $state("7d");
+  let logs = $state<string[]>([]);
   let consoleStream: EventSource | null = null;
-  let pools: ProxyPool[] = [];
-  let poolName = "";
-  let poolUrl = "";
-  let poolType = "http";
-  let poolNoProxy = "";
-  let poolStrict = false;
+  let pools = $state<ProxyPool[]>([]);
+  let poolName = $state("");
+  let poolUrl = $state("");
+  let poolType = $state("http");
+  let poolNoProxy = $state("");
+  let poolStrict = $state(false);
 
   const num = (value: unknown) => Number(value || 0).toLocaleString();
   const money = (value: unknown) => "$" + Number(value || 0).toFixed(4);
@@ -86,10 +83,6 @@
     return payload;
   }
 
-  async function checkHealth() {
-    try { const result = await request("/readyz"); health = result.ready ? "online" : "offline"; }
-    catch { health = "offline"; }
-  }
   async function checkSession() {
     try {
       const session = await request("/api/auth/session");
@@ -124,19 +117,9 @@
     keys = [];
     pools = [];
   }
-  function go(section: Section) {
-    active = section;
-    actionError = "";
-    successMessage = "";
-    const targetPath = sectionPaths[section];
-    if (window.location.pathname !== targetPath) window.history.pushState({ section }, "", targetPath);
-    if (section !== "Console Log") stopConsoleStream();
-    if (authenticated) void refreshSection(section);
-  }
   async function refreshSection(section: Section) {
     actionError = "";
     try {
-      if (section === "Overview") { await checkHealth(); const result = await request("/api/usage/stats?period=7d"); stats = result; }
       if (section === "Endpoint & Key") { await Promise.all([loadKeys(), loadSettings()]); }
       if (section === "Providers") await loadModels();
       if (section === "Usage") await loadUsage();
@@ -213,11 +196,6 @@
     if (next.has(id)) next.delete(id);
     else next.add(id);
     visibleKeys = next;
-  }
-  function toggleTheme() {
-    darkTheme = !darkTheme;
-    document.documentElement.classList.toggle("dark", darkTheme);
-    try { localStorage.setItem("blackhand-theme", darkTheme ? "dark" : "light"); } catch { /* storage is optional */ }
   }
   async function loadModels() {
     modelProbeMessage = "Checking OpenCode model catalogue…";
@@ -324,247 +302,176 @@
     catch (error) { actionError = error instanceof Error ? error.message : "Could not delete proxy pool"; }
   }
 
+  // The shell router owns navigation, so section loading follows the URL instead of a click handler.
+  let loadedSection: Section | null = null;
+  $effect(() => {
+    const section = active;
+    if (section === loadedSection) return;
+    loadedSection = section;
+    actionError = "";
+    successMessage = "";
+    if (section !== "Console Log") stopConsoleStream();
+    if (authenticated) void refreshSection(section);
+  });
+
   onMount(() => {
-    const foundRoute = (Object.values(sectionPaths) as string[]).includes(window.location.pathname);
-    active = sectionFromPath(window.location.pathname);
-    if (!foundRoute) window.history.replaceState({ section: active }, "", sectionPaths[active]);
-    const handlePopState = () => {
-      active = sectionFromPath(window.location.pathname);
-      actionError = "";
-      successMessage = "";
-      if (active !== "Console Log") stopConsoleStream();
-      if (authenticated) void refreshSection(active);
-    };
-    window.addEventListener("popstate", handlePopState);
-    try {
-      darkTheme = localStorage.getItem("blackhand-theme") === "dark";
-      document.documentElement.classList.toggle("dark", darkTheme);
-    } catch { /* use the light theme when storage is unavailable */ }
-    void (async () => {
-      await checkHealth();
-      await checkSession();
-    })();
-    return () => {
-      window.removeEventListener("popstate", handlePopState);
-      stopConsoleStream();
-    };
+    const known = [...(Object.values(sectionPaths) as string[]), "/dashboard", "/"];
+    if (!known.includes(window.location.pathname)) navigate(sectionPaths["Endpoint & Key"], true);
+    void checkSession();
+    return () => { stopConsoleStream(); };
   });
 </script>
 
-<svelte:head><title>{active === "Endpoint & Key" ? "Endpoint" : active === "Proxypools" ? "Proxy Pools" : active} · 9Router</title></svelte:head>
+<svelte:head><title>{pageTitle(active)} · Blackhand</title></svelte:head>
 
-<div class="shell">
-  <aside class="sidebar">
-    <div class="window-controls" aria-label="Window controls">
-      <span class="traffic-light red"></span><span class="traffic-light amber"></span><span class="traffic-light green"></span>
-    </div>
-    <a class="brand" href="/dashboard/endpoint" onclick={(event) => { event.preventDefault(); go("Endpoint & Key"); }}>
-      <span class="brand-mark"><span class="material-symbols-outlined">hub</span></span>
-      <span><strong>9Router</strong><small>BLACKHAND · GO BUILD</small></span>
-    </a>
-    <div class="nav-label">WORKSPACE</div>
-    <nav class="primary-nav">
-      {#each sections.filter(section => section.group !== "system") as section}
-        <button class:active={active === section.name} class="nav-item" onclick={() => go(section.name)}>
-          <span class="nav-icon material-symbols-outlined">{section.icon}</span><span>{section.label || section.name}</span>
-        </button>
-      {/each}
-      <div class="nav-group-label">SYSTEM</div>
-      {#each sections.filter(section => section.group === "system") as section}
-        <button class:active={active === section.name} class="nav-item" onclick={() => go(section.name)}>
-          <span class="nav-icon material-symbols-outlined">{section.icon}</span><span>{section.label || section.name}</span>
-        </button>
-      {/each}
-    </nav>
-    <div class="sidebar-bottom">
-      <div class="status-line"><span class:online={health === "online"} class:offline={health === "offline"} class="status-dot"></span><span>{health === "online" ? "Runtime ready" : health === "offline" ? "Runtime unavailable" : "Checking runtime"}</span></div>
-      <small>Single-binary Go runtime</small>
-    </div>
-  </aside>
+<DashboardLayout onLogout={logout}>
+  {#if actionError}<div class="message error">{actionError}</div>{/if}
+  {#if successMessage}<div class="message success">{successMessage}</div>{/if}
 
-  <main class="main">
-    <header class="topbar">
-      <div class="header-page-info">
-        <div class="header-title-row">
-          <span class="material-symbols-outlined header-page-icon">{sections.find(s => s.name === active)?.icon || "hub"}</span>
-          <h1>{active === "Endpoint & Key" ? "Endpoint" : active === "Proxypools" ? "Proxy Pools" : active}</h1>
-        </div>
-        <p>{sections.find(s => s.name === active)?.description}</p>
+  {#if active === "Endpoint & Key"}
+    <div class="panel endpoint-panel">
+      <div class="panel-heading"><div><div class="eyebrow">API CONNECTION</div><h2>Endpoint</h2></div><span class="pill">/v1</span></div>
+      <div class="endpoint-row"><span class="endpoint-kind">Local</span><code>{endpoint}</code><button class="button primary" onclick={() => copy(endpoint)}>Copy endpoint</button></div>
+      <div class="security-card" class:security-off={settings.requireApiKey === false}>
+        <div class="security-copy"><strong>{settings.requireApiKey === false ? "API key protection is disabled" : "API key protection is enabled"}</strong><p>{settings.requireApiKey === false ? "Requests to the inference endpoint may be accepted without a client key. Enable protection before exposing this endpoint to a network." : "Inference requests must include an active client API key."}</p></div>
+        <label class="setting-row compact-setting"><span><strong>Require API key</strong><small>Protect /v1 endpoints with a managed key.</small></span><input type="checkbox" checked={settings.requireApiKey !== false} onchange={(e) => saveSetting("requireApiKey", (e.currentTarget as HTMLInputElement).checked)} /></label>
       </div>
-      <div class="top-actions">
-        <button class="icon-button" aria-label="Toggle theme" title={darkTheme ? "Switch to light theme" : "Switch to dark theme"} onclick={toggleTheme}><span class="material-symbols-outlined">{darkTheme ? "light_mode" : "dark_mode"}</span></button>
-        <button class="icon-button" aria-label="Refresh section" title="Refresh section" onclick={() => refreshSection(active)}><span class="material-symbols-outlined">refresh</span></button>
-        {#if authenticated}<button class="button subtle" onclick={logout}>Sign out</button>{/if}
-        <span class="avatar">BH</span>
-      </div>
-    </header>
-
-    <section class="content">
-
-      {#if actionError}<div class="message error">{actionError}</div>{/if}
-      {#if successMessage}<div class="message success">{successMessage}</div>{/if}
-
-      {#if active === "Overview"}
-        <div class="stat-grid">
-          <article class="stat-card"><div class="stat-top">RUNTIME STATUS <span class="tiny-icon">◉</span></div><div class="stat-value">{health === "online" ? "Ready" : health === "offline" ? "Offline" : "Checking"}</div><div class="stat-foot"><span class:good={health === "online"} class="pill">{health === "online" ? "HEALTHY" : health.toUpperCase()}</span><span>Go process</span></div></article>
-          <article class="stat-card"><div class="stat-top">TOTAL REQUESTS <span class="tiny-icon">▥</span></div><div class="stat-value">{num(stats.totalRequests)}</div><div class="stat-foot"><span class="pill">USAGE</span><span>{num(stats.totalPromptTokens)} input tokens</span></div></article>
-          <article class="stat-card"><div class="stat-top">PUBLIC API <span class="tiny-icon">⌘</span></div><div class="stat-value">/v1</div><div class="stat-foot"><span class="pill">OPENAI COMPATIBLE</span><span>Port 20128</span></div></article>
-        </div>
-        <div class="panel endpoint-panel">
-          <div class="panel-heading"><div><div class="eyebrow">CONNECTION</div><h2>Connect your coding tool</h2></div><span class="live-label"><i></i> Local endpoint</span></div>
-          <p>Use this endpoint in a compatible AI coding client. API key enforcement follows the server setting.</p>
-          <div class="endpoint-row"><code>{endpoint}</code><button class="button primary" onclick={() => copy(endpoint)}>Copy endpoint</button></div>
-          <label class="field-label" for="probe-key">API key <span>Used only for model discovery test</span></label>
-          <input id="probe-key" type="password" bind:value={probeKey} placeholder="Enter a configured API key" autocomplete="off" />
-          <div class="panel-footer"><button class="button subtle" onclick={loadModels}>Test model endpoint</button><span>{modelProbeMessage}</span></div>
-        </div>
-      {:else if active === "Endpoint & Key"}
-        <div class="panel endpoint-panel">
-          <div class="panel-heading"><div><div class="eyebrow">API CONNECTION</div><h2>Endpoint</h2></div><span class="pill">/v1</span></div>
-          <div class="endpoint-row"><span class="endpoint-kind">Local</span><code>{endpoint}</code><button class="button primary" onclick={() => copy(endpoint)}>Copy endpoint</button></div>
-          <div class="security-card" class:security-off={settings.requireApiKey === false}>
-            <div class="security-copy"><strong>{settings.requireApiKey === false ? "API key protection is disabled" : "API key protection is enabled"}</strong><p>{settings.requireApiKey === false ? "Requests to the inference endpoint may be accepted without a client key. Enable protection before exposing this endpoint to a network." : "Inference requests must include an active client API key."}</p></div>
-            <label class="setting-row compact-setting"><span><strong>Require API key</strong><small>Protect /v1 endpoints with a managed key.</small></span><input type="checkbox" checked={settings.requireApiKey !== false} onchange={(e) => saveSetting("requireApiKey", (e.currentTarget as HTMLInputElement).checked)} /></label>
-          </div>
-          <h2>API keys</h2>
-          <form class="inline-form" onsubmit={createKey}>
-            <input bind:value={keyName} placeholder="Key name, e.g. OpenCode laptop" required />
-            <button class="button primary" type="submit">Create key</button>
-          </form>
-          {#if showCreatedKey}
-            <div class="created-key"><div><strong>Copy this key now</strong><code>{newKeyValue}</code></div><button class="button primary" onclick={() => copy(newKeyValue)}>Copy key</button><button class="button subtle" onclick={() => showCreatedKey = false}>Dismiss</button></div>
-          {/if}
-          <div class="key-list">
-            {#each keys as key (key.id)}
-              <div class="key-row">
-                <div class="key-info"><strong>{key.name || "Unnamed key"}</strong><small><code>{visibleKeys.has(key.id) ? key.key : maskKey(key.key)}</code></small><small>Created {key.createdAt || "date unavailable"} · {key.access?.restricted ? "Restricted to " + (key.access.allow || []).join(", ") : "Unrestricted access"}</small></div>
-                <span class:good={key.isActive} class="pill">{key.isActive ? "ACTIVE" : "DISABLED"}</span>
-                <button class="button subtle" onclick={() => toggleKeyVisibility(key.id)}>{visibleKeys.has(key.id) ? "Hide" : "Reveal"}</button>
-                <button class="button subtle" onclick={() => copy(key.key)}>Copy</button>
-                <button class="button subtle" onclick={() => editKeyAccess(key)}>{editingAccessKeyId === key.id ? "Close access" : "Access"}</button>
-                <button class="button subtle" onclick={() => toggleKey(key)}>{key.isActive ? "Disable" : "Enable"}</button>
-                <button class="button danger" onclick={() => deleteKey(key)}>Delete</button>
-                {#if editingAccessKeyId === key.id}
-                  <div class="access-editor">
-                    <label class="access-toggle"><input type="checkbox" bind:checked={accessRestricted} /> Restrict this key to an explicit model allow-list</label>
-                    <label class="field"><span>Allowed model IDs</span><textarea rows="4" bind:value={accessListText} placeholder="oc/model-id\none-model-id"></textarea></label>
-                    <small>One model ID per line (commas are also accepted). An unrestricted key ignores this list. A restricted key with an empty list cannot call any model.</small>
-                    <button class="button primary" onclick={() => saveKeyAccess(key)}>Save access policy</button>
-                  </div>
-                {/if}
-              </div>
-            {/each}
-            {#if keys.length === 0}<p class="muted">No managed keys created yet. Environment-configured keys may appear after the first API request.</p>{/if}
-          </div>
-        </div>
-      {:else if active === "Providers"}
-        <div class="panel provider-card"><div class="provider-logo">oc</div><div class="provider-info"><div class="provider-title"><h2>OpenCode Free</h2><span class="pill good">INITIAL PROVIDER</span></div><p>Public model prefix <code>oc/</code>. Requests are translated to native upstream model IDs.</p><div class="provider-meta"><span><i class="status-dot online"></i> Dynamic model catalogue</span><span>Source: opencode.ai/zen/v1/models</span></div></div><button class="button subtle" onclick={loadModels}>Refresh models</button></div>
-        <div class="panel endpoint-panel">
-          <div class="panel-heading"><h2>Model catalogue</h2><span class="pill">{models.length} models</span></div>
-          <label class="field-label" for="provider-key">Client API key <span>Only required when requireApiKey is enabled</span></label>
-          <div class="inline-form"><input id="provider-key" type="password" bind:value={probeKey} placeholder="sk-…" autocomplete="off" /><button class="button primary" onclick={loadModels}>Load models</button></div>
-          <p class="muted">{modelProbeMessage}</p>
-          <div class="model-list">{#each models as model (model.id)}<div class="model-item"><code>{model.id}</code><button class="button subtle" onclick={() => copy(model.id)}>Copy ID</button></div>{/each}</div>
-        </div>
-      {:else if active === "Usage"}
-        <div class="toolbar"><label>Period <select bind:value={period} onchange={() => changePeriod(period)}><option value="today">Today</option><option value="24h">Last 24 hours</option><option value="7d">7 days</option><option value="30d">30 days</option><option value="60d">60 days</option><option value="all">All time</option></select></label><button class="button subtle" onclick={loadUsage}>Refresh</button></div>
-        <div class="stat-grid">
-          <article class="stat-card"><div class="stat-top">REQUESTS</div><div class="stat-value">{num(stats.totalRequests)}</div><div class="stat-foot">Request records in selected period</div></article>
-          <article class="stat-card"><div class="stat-top">INPUT TOKENS</div><div class="stat-value">{num(stats.totalPromptTokens)}</div><div class="stat-foot">Prompt tokens</div></article>
-          <article class="stat-card"><div class="stat-top">OUTPUT TOKENS</div><div class="stat-value">{num(stats.totalCompletionTokens)}</div><div class="stat-foot">Completion tokens · Cached {num(stats.totalCachedTokens)}</div></article>
-        </div>
-        <div class="panel endpoint-panel">
-          <div class="panel-heading"><h2>Traffic overview</h2><span class="muted">Tokens per time bucket</span></div>
-          {#if chart.length > 0}
-            {@const maxTokens = Math.max(1, ...chart.map(p => p.tokens))}
-            <div class="chart-bars">{#each chart as point}<div class="chart-col" title={point.label + ": " + num(point.tokens) + " tokens"}><div class="chart-bar" style={"height:" + percentWidth(point.tokens,maxTokens) + "%"}></div><small>{point.label}</small></div>{/each}</div>
-          {:else}<p class="muted">No usage data for this period.</p>{/if}
-        </div>
-        <div class="panel endpoint-panel"><div class="panel-heading"><h2>By provider</h2></div>
-          {#each Object.entries(stats.byProvider || {}) as [provider, value]}<div class="provider-stat"><strong>{provider}</strong><span>{num(value.requests)} requests</span><span>{num(value.promptTokens)} in / {num(value.completionTokens)} out</span></div>{/each}
-        </div>
-        <div class="panel endpoint-panel"><div class="panel-heading"><h2>Recent requests</h2></div>
-          <div class="table-wrap"><table><thead><tr><th>Time</th><th>Provider</th><th>Model</th><th>Status</th><th>Tokens</th></tr></thead><tbody>
-          {#each (stats.recentRequests || []) as item, i}<tr><td>{item.timestamp || "—"}</td><td>{item.provider || "opencode"}</td><td><code>{item.model || "—"}</code></td><td>{item.status || "ok"}</td><td>{num((item.promptTokens || 0)+(item.completionTokens || 0))}</td></tr>{/each}
-          </tbody></table></div>
-        </div>
-      {:else if active === "Token Saver"}
-        <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">REQUEST PIPELINE</div><h2>Token reduction</h2></div><span class="pill">FAIL-OPEN</span></div>
-          <p>Local RTK filters run inside Go. Headroom is an optional external compression service; a failed service leaves the original request intact. PXPipe is not automatically installed by this single-binary build.</p>
-          <div class="setting-list">
-            <label class="setting-row"><span><strong>RTK filters</strong><small>Compact tool output such as git, grep, directory listings and build logs.</small></span><input type="checkbox" checked={settings.rtkEnabled !== false} onchange={(e) => saveSetting("rtkEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
-            <label class="setting-row"><span><strong>Headroom</strong><small>Send eligible OpenAI message arrays to a compatible Headroom service.</small></span><input type="checkbox" checked={Boolean(settings.headroomEnabled)} onchange={(e) => saveSetting("headroomEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
-            <label class="setting-row"><span><strong>Compress user messages</strong><small>Ask Headroom to include user messages in compression.</small></span><input type="checkbox" checked={settings.headroomCompressUserMessages !== false} onchange={(e) => saveSetting("headroomCompressUserMessages", (e.currentTarget as HTMLInputElement).checked)} /></label>
-            <label class="setting-row"><span><strong>Caveman prompt</strong><small>Encourage shorter, direct response wording.</small></span><input type="checkbox" checked={Boolean(settings.cavemanEnabled)} onchange={(e) => saveSetting("cavemanEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
-            <label class="setting-row"><span><strong>Ponytail prompt</strong><small>Prefer simpler code and avoid unnecessary abstractions.</small></span><input type="checkbox" checked={Boolean(settings.ponytailEnabled)} onchange={(e) => saveSetting("ponytailEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
-            <label class="setting-row"><span><strong>PXPipe</strong><small>Configuration is preserved; execution is skipped unless a bundled adapter is added.</small></span><input type="checkbox" checked={Boolean(settings.pxpipeEnabled)} onchange={(e) => saveSetting("pxpipeEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
-          </div>
-          <div class="field-grid"><label class="field"><span>Headroom URL</span><input bind:value={settings.headroomUrl} placeholder="http://localhost:8787" /></label><label class="field"><span>Timeout (ms)</span><input type="number" min="100" max="32000" bind:value={settings.headroomTimeoutMs} /></label></div>
-          <button class="button primary" onclick={async () => { await saveSetting("headroomUrl", settings.headroomUrl); await saveSetting("headroomTimeoutMs", Number(settings.headroomTimeoutMs)); }}>Save Headroom options</button>
-        </div>
-      {:else if active === "Console Log"}
-        <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">LIVE DIAGNOSTICS</div><h2>Console log</h2></div><span class="pill good">SSE</span></div>
-          <p>Bounded in-memory buffer. Credentials and full request payloads are not intentionally emitted by the router log.</p>
-          <div class="console-toolbar"><span>{logs.length} lines buffered</span><button class="button subtle" onclick={loadLogs}>Reload</button><button class="button danger" onclick={clearLogs}>Clear buffer</button></div>
-          <div class="console-output">{#each logs as line, i}<div class="console-line"><span>{String(i+1).padStart(3,"0")}</span><code>{line}</code></div>{/each}{#if logs.length===0}<div class="muted">No log lines yet. API requests will appear here.</div>{/if}</div>
-        </div>
-      {:else if active === "Settings"}
-        <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">ACCESS CONTROL</div><h2>Router settings</h2></div><span class="pill">SAVED</span></div>
-          <div class="setting-list">
-            <label class="setting-row"><span><strong>Require dashboard login</strong><small>Protect management APIs and settings with a dashboard session.</small></span><input type="checkbox" checked={settings.requireLogin !== false} onchange={(e) => saveSetting("requireLogin", (e.currentTarget as HTMLInputElement).checked)} /></label>
-            <label class="setting-row"><span><strong>Require API key</strong><small>Require a valid active key for /v1 inference endpoints.</small></span><input type="checkbox" checked={settings.requireApiKey !== false} onchange={(e) => saveSetting("requireApiKey", (e.currentTarget as HTMLInputElement).checked)} /></label>
-            <label class="setting-row"><span><strong>Outbound proxy</strong><small>Apply configured HTTP(S) proxy to OpenCode Free requests.</small></span><input type="checkbox" checked={Boolean(settings.outboundProxyEnabled)} onchange={(e) => saveSetting("outboundProxyEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
-          </div>
-          <div class="field-grid">
-            <label class="field"><span>Outbound proxy pool</span>
-              <select bind:value={settings.outboundProxyPoolId} onchange={() => saveSetting("outboundProxyPoolId", settings.outboundProxyPoolId || "")}>
-                <option value="">Use direct or proxy URL below</option>
-                {#each pools as pool (pool.id)}<option value={pool.id}>{pool.name} · {pool.type}{pool.isActive ? "" : " (inactive)"}</option>{/each}
-              </select>
-            </label>
-            <label class="field"><span>Outbound proxy URL (legacy)</span><input bind:value={settings.outboundProxyUrl} placeholder="http://127.0.0.1:8080" /></label>
-            <label class="field"><span>No-proxy list (legacy)</span><input bind:value={settings.outboundNoProxy} placeholder="localhost,127.0.0.1" /></label>
-          </div>
-          <button class="button primary" onclick={async () => { await saveSetting("outboundProxyUrl", settings.outboundProxyUrl || ""); await saveSetting("outboundNoProxy", settings.outboundNoProxy || ""); await saveSetting("outboundProxyPoolId", settings.outboundProxyPoolId || ""); }}>Save network settings</button>
-          <p class="muted">When outbound proxy is enabled, the selected pool takes precedence over the legacy proxy URL. A strict pool never falls back directly when the proxy is unavailable.</p>
-        </div>
-        <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">DASHBOARD SECURITY</div><h2>{hasPassword ? "Change password" : "Set a password"}</h2></div></div>
-          <form class="password-form" onsubmit={savePassword}>
-            {#if hasPassword}<label class="field"><span>Current password</span><input type="password" bind:value={currentPassword} autocomplete="current-password" required /></label>{/if}
-            <label class="field"><span>New password (minimum 8 characters)</span><input type="password" bind:value={newPassword} autocomplete="new-password" minlength="8" required /></label>
-            <button class="button primary" type="submit">Update password</button>
-          </form>
-          <p class="muted">This port currently supports password login only. OIDC/SAML settings are preserved, but no SSO flow is connected yet.</p>
-        </div>
-      {:else if active === "Proxypools"}
-        <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">EGRESS</div><h2>Proxy pools</h2></div><span class="pill">{pools.length} pools</span></div>
-          <form class="pool-form" onsubmit={createPool}>
-            <div class="field-grid"><label class="field"><span>Name</span><input bind:value={poolName} placeholder="Local proxy" required /></label><label class="field"><span>Proxy URL</span><input bind:value={poolUrl} placeholder="http://127.0.0.1:8080" required /></label></div>
-            <div class="field-grid"><label class="field"><span>Type</span><select bind:value={poolType}><option value="http">HTTP / HTTPS</option><option value="vercel">Vercel relay</option><option value="cloudflare">Cloudflare relay</option><option value="deno">Deno relay</option><option value="netlify">Netlify relay</option></select></label><label class="field"><span>No-proxy list</span><input bind:value={poolNoProxy} placeholder="localhost,127.0.0.1" /></label></div>
-            <label class="setting-row"><span><strong>Strict proxy</strong><small>Do not permit direct-connect fallback when used by a bound connection.</small></span><input type="checkbox" bind:checked={poolStrict} /></label>
-            <button class="button primary" type="submit">Add proxy pool</button>
-          </form>
-        </div>
-        <div class="pool-list">
-          {#each pools as pool (pool.id)}
-            <div class="panel pool-card">
-              <div class="pool-main"><div class="provider-logo">⇄</div><div class="provider-info"><div class="provider-title"><h2>{pool.name}</h2><span class:good={pool.isActive} class="pill">{pool.isActive ? "ACTIVE" : "DISABLED"}</span><span class="pill">{pool.testStatus || "untested"}</span></div><p><code>{pool.proxyUrl}</code></p><div class="provider-meta"><span>Type: {pool.type}</span><span>{pool.strictProxy ? "Strict mode" : "Fallback allowed"}</span><span>{pool.boundConnectionCount || 0} bound connections</span></div>{#if pool.lastError}<p class="error-text">{pool.lastError}</p>{/if}</div></div>
-              <div class="pool-actions"><button class="button subtle" onclick={() => testPool(pool)}>Test</button><button class="button subtle" onclick={() => togglePool(pool)}>{pool.isActive ? "Disable" : "Enable"}</button><button class="button danger" onclick={() => deletePool(pool)}>Delete</button></div>
-            </div>
-          {/each}
-          {#if pools.length===0}<div class="panel empty-state"><div class="empty-icon">⇄</div><h2>No proxy pools</h2><p>Add a pool above. Tests use a bounded timeout and persist their result.</p></div>{/if}
-        </div>
+      <h2>API keys</h2>
+      <form class="inline-form" onsubmit={createKey}>
+        <input bind:value={keyName} placeholder="Key name, e.g. OpenCode laptop" required />
+        <button class="button primary" type="submit">Create key</button>
+      </form>
+      {#if showCreatedKey}
+        <div class="created-key"><div><strong>Copy this key now</strong><code>{newKeyValue}</code></div><button class="button primary" onclick={() => copy(newKeyValue)}>Copy key</button><button class="button subtle" onclick={() => showCreatedKey = false}>Dismiss</button></div>
       {/if}
-      <div class="bottom-note"><span>BLACKHAND</span><span>Single executable · data stored outside the binary</span></div>
-    </section>
-  </main>
-</div>
+      <div class="key-list">
+        {#each keys as key (key.id)}
+          <div class="key-row">
+            <div class="key-info"><strong>{key.name || "Unnamed key"}</strong><small><code>{visibleKeys.has(key.id) ? key.key : maskKey(key.key)}</code></small><small>Created {key.createdAt || "date unavailable"} · {key.access?.restricted ? "Restricted to " + (key.access.allow || []).join(", ") : "Unrestricted access"}</small></div>
+            <span class:good={key.isActive} class="pill">{key.isActive ? "ACTIVE" : "DISABLED"}</span>
+            <button class="button subtle" onclick={() => toggleKeyVisibility(key.id)}>{visibleKeys.has(key.id) ? "Hide" : "Reveal"}</button>
+            <button class="button subtle" onclick={() => copy(key.key)}>Copy</button>
+            <button class="button subtle" onclick={() => editKeyAccess(key)}>{editingAccessKeyId === key.id ? "Close access" : "Access"}</button>
+            <button class="button subtle" onclick={() => toggleKey(key)}>{key.isActive ? "Disable" : "Enable"}</button>
+            <button class="button danger" onclick={() => deleteKey(key)}>Delete</button>
+            {#if editingAccessKeyId === key.id}
+              <div class="access-editor">
+                <label class="access-toggle"><input type="checkbox" bind:checked={accessRestricted} /> Restrict this key to an explicit model allow-list</label>
+                <label class="field"><span>Allowed model IDs</span><textarea rows="4" bind:value={accessListText} placeholder="oc/model-id\none-model-id"></textarea></label>
+                <small>One model ID per line (commas are also accepted). An unrestricted key ignores this list. A restricted key with an empty list cannot call any model.</small>
+                <button class="button primary" onclick={() => saveKeyAccess(key)}>Save access policy</button>
+              </div>
+            {/if}
+          </div>
+        {/each}
+        {#if keys.length === 0}<p class="muted">No managed keys created yet. Environment-configured keys may appear after the first API request.</p>{/if}
+      </div>
+    </div>
+  {:else if active === "Providers"}
+    <div class="panel provider-card"><div class="provider-logo">oc</div><div class="provider-info"><div class="provider-title"><h2>OpenCode Free</h2><span class="pill good">INITIAL PROVIDER</span></div><p>Public model prefix <code>oc/</code>. Requests are translated to native upstream model IDs.</p><div class="provider-meta"><span><i class="status-dot online"></i> Dynamic model catalogue</span><span>Source: opencode.ai/zen/v1/models</span></div></div><button class="button subtle" onclick={loadModels}>Refresh models</button></div>
+    <div class="panel endpoint-panel">
+      <div class="panel-heading"><h2>Model catalogue</h2><span class="pill">{models.length} models</span></div>
+      <label class="field-label" for="provider-key">Client API key <span>Only required when requireApiKey is enabled</span></label>
+      <div class="inline-form"><input id="provider-key" type="password" bind:value={probeKey} placeholder="sk-…" autocomplete="off" /><button class="button primary" onclick={loadModels}>Load models</button></div>
+      <p class="muted">{modelProbeMessage}</p>
+      <div class="model-list">{#each models as model (model.id)}<div class="model-item"><code>{model.id}</code><button class="button subtle" onclick={() => copy(model.id)}>Copy ID</button></div>{/each}</div>
+    </div>
+  {:else if active === "Usage"}
+    <div class="toolbar"><label>Period <select bind:value={period} onchange={() => changePeriod(period)}><option value="today">Today</option><option value="24h">Last 24 hours</option><option value="7d">7 days</option><option value="30d">30 days</option><option value="60d">60 days</option><option value="all">All time</option></select></label><button class="button subtle" onclick={loadUsage}>Refresh</button></div>
+    <div class="stat-grid">
+      <article class="stat-card"><div class="stat-top">REQUESTS</div><div class="stat-value">{num(stats.totalRequests)}</div><div class="stat-foot">Request records in selected period</div></article>
+      <article class="stat-card"><div class="stat-top">INPUT TOKENS</div><div class="stat-value">{num(stats.totalPromptTokens)}</div><div class="stat-foot">Prompt tokens</div></article>
+      <article class="stat-card"><div class="stat-top">OUTPUT TOKENS</div><div class="stat-value">{num(stats.totalCompletionTokens)}</div><div class="stat-foot">Completion tokens · Cached {num(stats.totalCachedTokens)}</div></article>
+    </div>
+    <div class="panel endpoint-panel">
+      <div class="panel-heading"><h2>Traffic overview</h2><span class="muted">Tokens per time bucket</span></div>
+      {#if chart.length > 0}
+        {@const maxTokens = Math.max(1, ...chart.map(p => p.tokens))}
+        <div class="chart-bars">{#each chart as point}<div class="chart-col" title={point.label + ": " + num(point.tokens) + " tokens"}><div class="chart-bar" style={"height:" + percentWidth(point.tokens,maxTokens) + "%"}></div><small>{point.label}</small></div>{/each}</div>
+      {:else}<p class="muted">No usage data for this period.</p>{/if}
+    </div>
+    <div class="panel endpoint-panel"><div class="panel-heading"><h2>By provider</h2></div>
+      {#each Object.entries(stats.byProvider || {}) as [provider, value]}<div class="provider-stat"><strong>{provider}</strong><span>{num(value.requests)} requests</span><span>{num(value.promptTokens)} in / {num(value.completionTokens)} out</span></div>{/each}
+    </div>
+    <div class="panel endpoint-panel"><div class="panel-heading"><h2>Recent requests</h2></div>
+      <div class="table-wrap"><table><thead><tr><th>Time</th><th>Provider</th><th>Model</th><th>Status</th><th>Tokens</th></tr></thead><tbody>
+      {#each (stats.recentRequests || []) as item, i}<tr><td>{item.timestamp || "—"}</td><td>{item.provider || "opencode"}</td><td><code>{item.model || "—"}</code></td><td>{item.status || "ok"}</td><td>{num((item.promptTokens || 0)+(item.completionTokens || 0))}</td></tr>{/each}
+      </tbody></table></div>
+    </div>
+  {:else if active === "Token Saver"}
+    <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">REQUEST PIPELINE</div><h2>Token reduction</h2></div><span class="pill">FAIL-OPEN</span></div>
+      <p>Local RTK filters run inside Go. Headroom is an optional external compression service; a failed service leaves the original request intact. PXPipe is not automatically installed by this single-binary build.</p>
+      <div class="setting-list">
+        <label class="setting-row"><span><strong>RTK filters</strong><small>Compact tool output such as git, grep, directory listings and build logs.</small></span><input type="checkbox" checked={settings.rtkEnabled !== false} onchange={(e) => saveSetting("rtkEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
+        <label class="setting-row"><span><strong>Headroom</strong><small>Send eligible OpenAI message arrays to a compatible Headroom service.</small></span><input type="checkbox" checked={Boolean(settings.headroomEnabled)} onchange={(e) => saveSetting("headroomEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
+        <label class="setting-row"><span><strong>Compress user messages</strong><small>Ask Headroom to include user messages in compression.</small></span><input type="checkbox" checked={settings.headroomCompressUserMessages !== false} onchange={(e) => saveSetting("headroomCompressUserMessages", (e.currentTarget as HTMLInputElement).checked)} /></label>
+        <label class="setting-row"><span><strong>Caveman prompt</strong><small>Encourage shorter, direct response wording.</small></span><input type="checkbox" checked={Boolean(settings.cavemanEnabled)} onchange={(e) => saveSetting("cavemanEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
+        <label class="setting-row"><span><strong>Ponytail prompt</strong><small>Prefer simpler code and avoid unnecessary abstractions.</small></span><input type="checkbox" checked={Boolean(settings.ponytailEnabled)} onchange={(e) => saveSetting("ponytailEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
+        <label class="setting-row"><span><strong>PXPipe</strong><small>Configuration is preserved; execution is skipped unless a bundled adapter is added.</small></span><input type="checkbox" checked={Boolean(settings.pxpipeEnabled)} onchange={(e) => saveSetting("pxpipeEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
+      </div>
+      <div class="field-grid"><label class="field"><span>Headroom URL</span><input bind:value={settings.headroomUrl} placeholder="http://localhost:8787" /></label><label class="field"><span>Timeout (ms)</span><input type="number" min="100" max="32000" bind:value={settings.headroomTimeoutMs} /></label></div>
+      <button class="button primary" onclick={async () => { await saveSetting("headroomUrl", settings.headroomUrl); await saveSetting("headroomTimeoutMs", Number(settings.headroomTimeoutMs)); }}>Save Headroom options</button>
+    </div>
+  {:else if active === "Console Log"}
+    <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">LIVE DIAGNOSTICS</div><h2>Console log</h2></div><span class="pill good">SSE</span></div>
+      <p>Bounded in-memory buffer. Credentials and full request payloads are not intentionally emitted by the router log.</p>
+      <div class="console-toolbar"><span>{logs.length} lines buffered</span><button class="button subtle" onclick={loadLogs}>Reload</button><button class="button danger" onclick={clearLogs}>Clear buffer</button></div>
+      <div class="console-output">{#each logs as line, i}<div class="console-line"><span>{String(i+1).padStart(3,"0")}</span><code>{line}</code></div>{/each}{#if logs.length===0}<div class="muted">No log lines yet. API requests will appear here.</div>{/if}</div>
+    </div>
+  {:else if active === "Settings"}
+    <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">ACCESS CONTROL</div><h2>Router settings</h2></div><span class="pill">SAVED</span></div>
+      <div class="setting-list">
+        <label class="setting-row"><span><strong>Require dashboard login</strong><small>Protect management APIs and settings with a dashboard session.</small></span><input type="checkbox" checked={settings.requireLogin !== false} onchange={(e) => saveSetting("requireLogin", (e.currentTarget as HTMLInputElement).checked)} /></label>
+        <label class="setting-row"><span><strong>Require API key</strong><small>Require a valid active key for /v1 inference endpoints.</small></span><input type="checkbox" checked={settings.requireApiKey !== false} onchange={(e) => saveSetting("requireApiKey", (e.currentTarget as HTMLInputElement).checked)} /></label>
+        <label class="setting-row"><span><strong>Outbound proxy</strong><small>Apply configured HTTP(S) proxy to OpenCode Free requests.</small></span><input type="checkbox" checked={Boolean(settings.outboundProxyEnabled)} onchange={(e) => saveSetting("outboundProxyEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
+      </div>
+      <div class="field-grid">
+        <label class="field"><span>Outbound proxy pool</span>
+          <select bind:value={settings.outboundProxyPoolId} onchange={() => saveSetting("outboundProxyPoolId", settings.outboundProxyPoolId || "")}>
+            <option value="">Use direct or proxy URL below</option>
+            {#each pools as pool (pool.id)}<option value={pool.id}>{pool.name} · {pool.type}{pool.isActive ? "" : " (inactive)"}</option>{/each}
+          </select>
+        </label>
+        <label class="field"><span>Outbound proxy URL (legacy)</span><input bind:value={settings.outboundProxyUrl} placeholder="http://127.0.0.1:8080" /></label>
+        <label class="field"><span>No-proxy list (legacy)</span><input bind:value={settings.outboundNoProxy} placeholder="localhost,127.0.0.1" /></label>
+      </div>
+      <button class="button primary" onclick={async () => { await saveSetting("outboundProxyUrl", settings.outboundProxyUrl || ""); await saveSetting("outboundNoProxy", settings.outboundNoProxy || ""); await saveSetting("outboundProxyPoolId", settings.outboundProxyPoolId || ""); }}>Save network settings</button>
+      <p class="muted">When outbound proxy is enabled, the selected pool takes precedence over the legacy proxy URL. A strict pool never falls back directly when the proxy is unavailable.</p>
+    </div>
+    <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">DASHBOARD SECURITY</div><h2>{hasPassword ? "Change password" : "Set a password"}</h2></div></div>
+      <form class="password-form" onsubmit={savePassword}>
+        {#if hasPassword}<label class="field"><span>Current password</span><input type="password" bind:value={currentPassword} autocomplete="current-password" required /></label>{/if}
+        <label class="field"><span>New password (minimum 8 characters)</span><input type="password" bind:value={newPassword} autocomplete="new-password" minlength="8" required /></label>
+        <button class="button primary" type="submit">Update password</button>
+      </form>
+      <p class="muted">This port currently supports password login only. OIDC/SAML settings are preserved, but no SSO flow is connected yet.</p>
+    </div>
+  {:else if active === "Proxypools"}
+    <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">EGRESS</div><h2>Proxy pools</h2></div><span class="pill">{pools.length} pools</span></div>
+      <form class="pool-form" onsubmit={createPool}>
+        <div class="field-grid"><label class="field"><span>Name</span><input bind:value={poolName} placeholder="Local proxy" required /></label><label class="field"><span>Proxy URL</span><input bind:value={poolUrl} placeholder="http://127.0.0.1:8080" required /></label></div>
+        <div class="field-grid"><label class="field"><span>Type</span><select bind:value={poolType}><option value="http">HTTP / HTTPS</option><option value="vercel">Vercel relay</option><option value="cloudflare">Cloudflare relay</option><option value="deno">Deno relay</option><option value="netlify">Netlify relay</option></select></label><label class="field"><span>No-proxy list</span><input bind:value={poolNoProxy} placeholder="localhost,127.0.0.1" /></label></div>
+        <label class="setting-row"><span><strong>Strict proxy</strong><small>Do not permit direct-connect fallback when used by a bound connection.</small></span><input type="checkbox" bind:checked={poolStrict} /></label>
+        <button class="button primary" type="submit">Add proxy pool</button>
+      </form>
+    </div>
+    <div class="pool-list">
+      {#each pools as pool (pool.id)}
+        <div class="panel pool-card">
+          <div class="pool-main"><div class="provider-logo">⇄</div><div class="provider-info"><div class="provider-title"><h2>{pool.name}</h2><span class:good={pool.isActive} class="pill">{pool.isActive ? "ACTIVE" : "DISABLED"}</span><span class="pill">{pool.testStatus || "untested"}</span></div><p><code>{pool.proxyUrl}</code></p><div class="provider-meta"><span>Type: {pool.type}</span><span>{pool.strictProxy ? "Strict mode" : "Fallback allowed"}</span><span>{pool.boundConnectionCount || 0} bound connections</span></div>{#if pool.lastError}<p class="error-text">{pool.lastError}</p>{/if}</div></div>
+          <div class="pool-actions"><button class="button subtle" onclick={() => testPool(pool)}>Test</button><button class="button subtle" onclick={() => togglePool(pool)}>{pool.isActive ? "Disable" : "Enable"}</button><button class="button danger" onclick={() => deletePool(pool)}>Delete</button></div>
+        </div>
+      {/each}
+      {#if pools.length===0}<div class="panel empty-state"><div class="empty-icon">⇄</div><h2>No proxy pools</h2><p>Add a pool above. Tests use a bounded timeout and persist their result.</p></div>{/if}
+    </div>
+  {/if}
+</DashboardLayout>
 
 {#if loginRequired && !authenticated}
   <div class="login-overlay">
     <form class="login-card" onsubmit={login}>
       <div class="brand-mark login-mark"><span class="material-symbols-outlined">hub</span></div>
-      <div class="eyebrow">9ROUTER / SECURE ACCESS</div>
+      <div class="eyebrow">BLACKHAND / SECURE ACCESS</div>
       <h1>Sign in</h1>
       <p>Sign in to manage your endpoint, providers, API keys, usage and router settings.</p>
       {#if authError}<div class="message error">{authError}</div>{/if}
