@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import DashboardLayout from "./shell/DashboardLayout.svelte";
+  import EndpointPage from "./pages/endpoint/EndpointPage.svelte";
   import { navigate, route } from "./lib/router.svelte";
 
   type Section = "Endpoint & Key" | "Providers" | "Usage" | "Token Saver" | "Console Log" | "Settings" | "Proxypools";
-  type APIKey = { id: string; key: string; name: string; isActive: boolean; createdAt?: string; access?: { restricted: boolean; allow: string[] } };
   type ProxyPool = { id: string; name: string; proxyUrl: string; noProxy?: string; type: string; isActive: boolean; strictProxy?: boolean; testStatus?: string; lastError?: string; boundConnectionCount?: number };
   type Stats = { totalRequests?: number; totalPromptTokens?: number; totalCompletionTokens?: number; totalCachedTokens?: number; totalCost?: number; byProvider?: Record<string, any>; recentRequests?: any[]; activeRequests?: any[]; last10Minutes?: any[] };
   type ChartPoint = { label: string; tokens: number; cost: number; requests: number };
@@ -40,18 +40,9 @@
   let actionError = $state("");
   let successMessage = $state("");
   let busy = $state(false);
-  let visibleKeys = $state(new Set<string>());
-  let endpoint = $state(window.location.origin + "/v1");
   let probeKey = $state("");
   let models = $state<any[]>([]);
   let modelProbeMessage = $state("");
-  let keys = $state<APIKey[]>([]);
-  let keyName = $state("My coding client");
-  let newKeyValue = $state("");
-  let showCreatedKey = $state(false);
-  let editingAccessKeyId = $state("");
-  let accessRestricted = $state(false);
-  let accessListText = $state("");
   let settings = $state<Record<string, any>>({});
   let currentPassword = $state("");
   let newPassword = $state("");
@@ -68,7 +59,6 @@
   let poolStrict = $state(false);
 
   const num = (value: unknown) => Number(value || 0).toLocaleString();
-  const money = (value: unknown) => "$" + Number(value || 0).toFixed(4);
   const percentWidth = (value: number, max: number) => max > 0 ? Math.max(value > 0 ? 2 : 0, value / max * 100) : 0;
 
   async function request(path: string, init: RequestInit = {}) {
@@ -114,13 +104,13 @@
     authenticated = false;
     loginRequired = true;
     settings = {};
-    keys = [];
+    models = [];
     pools = [];
   }
   async function refreshSection(section: Section) {
     actionError = "";
     try {
-      if (section === "Endpoint & Key") { await Promise.all([loadKeys(), loadSettings()]); }
+      // Endpoint & Key owns its data: it loads keys and settings itself.
       if (section === "Providers") await loadModels();
       if (section === "Usage") await loadUsage();
       if (section === "Token Saver" || section === "Settings") await loadSettings();
@@ -129,73 +119,9 @@
       if (section === "Proxypools") await loadPools();
     } catch (error) { actionError = error instanceof Error ? error.message : "Could not load this section"; }
   }
-  async function loadKeys() {
-    const result = await request("/api/keys");
-    keys = result.keys || [];
-  }
-  async function createKey(event: SubmitEvent) {
-    event.preventDefault();
-    actionError = "";
-    successMessage = "";
-    try {
-      const result = await request("/api/keys", { method: "POST", body: JSON.stringify({ name: keyName }) });
-      newKeyValue = result.key;
-      showCreatedKey = true;
-      keyName = "";
-      await loadKeys();
-      successMessage = "API key created. Copy it now; keep it private.";
-    } catch (error) { actionError = error instanceof Error ? error.message : "Could not create API key"; }
-  }
-  async function toggleKey(key: APIKey) {
-    try {
-      await request("/api/keys/" + encodeURIComponent(key.id), { method: "PUT", body: JSON.stringify({ isActive: !key.isActive }) });
-      await loadKeys();
-      successMessage = key.isActive ? "API key disabled" : "API key enabled";
-    } catch (error) { actionError = error instanceof Error ? error.message : "Could not update key"; }
-  }
-  async function deleteKey(key: APIKey) {
-    if (!window.confirm("Delete API key " + key.name + "? Existing clients using it will stop working.")) return;
-    try { await request("/api/keys/" + encodeURIComponent(key.id), { method: "DELETE" }); await loadKeys(); }
-    catch (error) { actionError = error instanceof Error ? error.message : "Could not delete key"; }
-  }
-  function editKeyAccess(key: APIKey) {
-    if (editingAccessKeyId === key.id) {
-      editingAccessKeyId = "";
-      return;
-    }
-    editingAccessKeyId = key.id;
-    accessRestricted = Boolean(key.access?.restricted);
-    accessListText = (key.access?.allow || []).join("\n");
-  }
-  async function saveKeyAccess(key: APIKey) {
-    actionError = "";
-    try {
-      const allow = accessListText.split(/[\n,]/g).map(value => value.trim()).filter(Boolean);
-      await request("/api/keys/" + encodeURIComponent(key.id), {
-        method: "PUT",
-        body: JSON.stringify({ access: { restricted: accessRestricted, allow } })
-      });
-      await loadKeys();
-      editingAccessKeyId = "";
-      successMessage = accessRestricted ? "Model allow-list saved" : "API key now has unrestricted model access";
-    } catch (error) {
-      actionError = error instanceof Error ? error.message : "Could not update model access";
-    }
-  }
   async function copy(text: string) {
     try { await navigator.clipboard.writeText(text); successMessage = "Copied to clipboard"; }
     catch { actionError = "Clipboard access was denied by the browser"; }
-  }
-  function maskKey(value: string) {
-    if (!value) return "";
-    if (value.length <= 10) return "•".repeat(value.length);
-    return value.slice(0, 6) + "•".repeat(Math.min(16, value.length - 10)) + value.slice(-4);
-  }
-  function toggleKeyVisibility(id: string) {
-    const next = new Set(visibleKeys);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    visibleKeys = next;
   }
   async function loadModels() {
     modelProbeMessage = "Checking OpenCode model catalogue…";
@@ -329,44 +255,7 @@
   {#if successMessage}<div class="message success">{successMessage}</div>{/if}
 
   {#if active === "Endpoint & Key"}
-    <div class="panel endpoint-panel">
-      <div class="panel-heading"><div><div class="eyebrow">API CONNECTION</div><h2>Endpoint</h2></div><span class="pill">/v1</span></div>
-      <div class="endpoint-row"><span class="endpoint-kind">Local</span><code>{endpoint}</code><button class="button primary" onclick={() => copy(endpoint)}>Copy endpoint</button></div>
-      <div class="security-card" class:security-off={settings.requireApiKey === false}>
-        <div class="security-copy"><strong>{settings.requireApiKey === false ? "API key protection is disabled" : "API key protection is enabled"}</strong><p>{settings.requireApiKey === false ? "Requests to the inference endpoint may be accepted without a client key. Enable protection before exposing this endpoint to a network." : "Inference requests must include an active client API key."}</p></div>
-        <label class="setting-row compact-setting"><span><strong>Require API key</strong><small>Protect /v1 endpoints with a managed key.</small></span><input type="checkbox" checked={settings.requireApiKey !== false} onchange={(e) => saveSetting("requireApiKey", (e.currentTarget as HTMLInputElement).checked)} /></label>
-      </div>
-      <h2>API keys</h2>
-      <form class="inline-form" onsubmit={createKey}>
-        <input bind:value={keyName} placeholder="Key name, e.g. OpenCode laptop" required />
-        <button class="button primary" type="submit">Create key</button>
-      </form>
-      {#if showCreatedKey}
-        <div class="created-key"><div><strong>Copy this key now</strong><code>{newKeyValue}</code></div><button class="button primary" onclick={() => copy(newKeyValue)}>Copy key</button><button class="button subtle" onclick={() => showCreatedKey = false}>Dismiss</button></div>
-      {/if}
-      <div class="key-list">
-        {#each keys as key (key.id)}
-          <div class="key-row">
-            <div class="key-info"><strong>{key.name || "Unnamed key"}</strong><small><code>{visibleKeys.has(key.id) ? key.key : maskKey(key.key)}</code></small><small>Created {key.createdAt || "date unavailable"} · {key.access?.restricted ? "Restricted to " + (key.access.allow || []).join(", ") : "Unrestricted access"}</small></div>
-            <span class:good={key.isActive} class="pill">{key.isActive ? "ACTIVE" : "DISABLED"}</span>
-            <button class="button subtle" onclick={() => toggleKeyVisibility(key.id)}>{visibleKeys.has(key.id) ? "Hide" : "Reveal"}</button>
-            <button class="button subtle" onclick={() => copy(key.key)}>Copy</button>
-            <button class="button subtle" onclick={() => editKeyAccess(key)}>{editingAccessKeyId === key.id ? "Close access" : "Access"}</button>
-            <button class="button subtle" onclick={() => toggleKey(key)}>{key.isActive ? "Disable" : "Enable"}</button>
-            <button class="button danger" onclick={() => deleteKey(key)}>Delete</button>
-            {#if editingAccessKeyId === key.id}
-              <div class="access-editor">
-                <label class="access-toggle"><input type="checkbox" bind:checked={accessRestricted} /> Restrict this key to an explicit model allow-list</label>
-                <label class="field"><span>Allowed model IDs</span><textarea rows="4" bind:value={accessListText} placeholder="oc/model-id\none-model-id"></textarea></label>
-                <small>One model ID per line (commas are also accepted). An unrestricted key ignores this list. A restricted key with an empty list cannot call any model.</small>
-                <button class="button primary" onclick={() => saveKeyAccess(key)}>Save access policy</button>
-              </div>
-            {/if}
-          </div>
-        {/each}
-        {#if keys.length === 0}<p class="muted">No managed keys created yet. Environment-configured keys may appear after the first API request.</p>{/if}
-      </div>
-    </div>
+    <EndpointPage />
   {:else if active === "Providers"}
     <div class="panel provider-card"><div class="provider-logo">oc</div><div class="provider-info"><div class="provider-title"><h2>OpenCode Free</h2><span class="pill good">INITIAL PROVIDER</span></div><p>Public model prefix <code>oc/</code>. Requests are translated to native upstream model IDs.</p><div class="provider-meta"><span><i class="status-dot online"></i> Dynamic model catalogue</span><span>Source: opencode.ai/zen/v1/models</span></div></div><button class="button subtle" onclick={loadModels}>Refresh models</button></div>
     <div class="panel endpoint-panel">
