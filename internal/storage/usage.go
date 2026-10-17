@@ -71,6 +71,12 @@ func maskUsageKey(key string) any {
 }
 
 func (s *Store) SaveRequestUsage(ctx context.Context, entry UsageEntry) error {
+	// Serialize the read-modify-write rollup sequence. SQLite allows multiple
+	// readers but one writer, and deferred transactions that upgrade from a
+	// shared read lock can fail under contention instead of waiting cleanly.
+	s.usageWriteMu.Lock()
+	defer s.usageWriteMu.Unlock()
+
 	if entry.Timestamp == "" { entry.Timestamp = nowISO() }
 	entry.Timestamp = normalizeDBTimestamp(entry.Timestamp)
 	if entry.Status == "" { entry.Status = "ok" }
