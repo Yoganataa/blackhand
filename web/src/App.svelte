@@ -220,6 +220,9 @@
 <svelte:head><title>{pageTitle(active)} · Blackhand</title></svelte:head>
 
 <DashboardLayout onLogout={logout}>
+  <!-- Remount the area content when the dashboard session changes: without this, a page that mounted
+       before signing in keeps the data it fetched while unauthenticated. -->
+  {#key authenticated}
   {#if actionError}<div class="message error">{actionError}</div>{/if}
   {#if successMessage}<div class="message success">{successMessage}</div>{/if}
 
@@ -294,6 +297,7 @@
       {#if pools.length===0}<div class="panel empty-state"><div class="empty-icon">⇄</div><h2>No proxy pools</h2><p>Add a pool above. Tests use a bounded timeout and persist their result.</p></div>{/if}
     </div>
   {/if}
+  {/key}
 </DashboardLayout>
 
 {#if loginRequired && !authenticated}

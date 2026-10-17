@@ -71,6 +71,7 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("POST /api/models/disabled",a.dashboardAuth(http.HandlerFunc(a.modelsDisabledCreate)))
 	mux.Handle("DELETE /api/models/disabled",a.dashboardAuth(http.HandlerFunc(a.modelsDisabledDelete)))
 	mux.Handle("GET /api/models",a.dashboardAuth(http.HandlerFunc(a.modelsCatalogue)))
+	mux.Handle("POST /api/models/test",a.dashboardAuth(http.HandlerFunc(a.modelTest)))
 
 	mux.Handle("GET /api/proxy-pools",a.dashboardAuth(http.HandlerFunc(a.proxyPoolsList)))
 	mux.Handle("POST /api/proxy-pools",a.dashboardAuth(http.HandlerFunc(a.proxyPoolCreate)))

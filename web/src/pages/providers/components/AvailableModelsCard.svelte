@@ -1,11 +1,13 @@
 <script lang="ts">
   // Ported from the model section of 9Router `dashboard/providers/[id]/page.js` (decolua/87a74e1).
-  // Model ids come from the live catalogue (/v1/models) because that is what this provider serves;
-  // upstream additionally merges static registry models, a kilo free-model import and per-model caps.
-  // Not ported here: the thinking selector, "Suggested free models", "Add Model" and the per-model
-  // Test action — see docs/PORT_1TO1.md.
+  // Model ids come from the catalogue behind the dashboard session (/api/models), filtered to the
+  // provider's free models with the same rule upstream applies in
+  // `api/providers/suggested-models/filters.js` → `opencode-free`.
+  // Not ported here: the thinking selector, "Suggested free models", "Add Model"/custom models and
+  // aliases — see docs/PORT_1TO1.md.
   import { onMount } from "svelte";
   import { createClipboard } from "../../../lib/clipboard.svelte";
+  import { isFreeOpenCodeModel } from "../../../lib/providers";
   import Button from "../../../ui/Button.svelte";
   import Card from "../../../ui/Card.svelte";
   import ConfirmModal from "../../../ui/ConfirmModal.svelte";
@@ -23,6 +25,9 @@
   let disabledIds = $state<string[]>([]);
   let loading = $state(true);
   let confirmState = $state<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  let modelTestResults = $state<Record<string, "ok" | "error">>({});
+  let testingModelId = $state<string | null>(null);
+  let testError = $state("");
 
   const disabledSet = $derived(new Set(disabledIds));
   const displayModels = $derived(models.filter((model) => !disabledSet.has(model.id)));
@@ -37,10 +42,9 @@
         fetch(`/api/models/disabled?providerAlias=${encodeURIComponent(providerAlias)}`, { cache: "no-store" }),
       ]);
       const modelsData = modelsRes.ok ? await modelsRes.json() : { models: [] };
-      models = (modelsData.models || []).map((entry: { model: string; name?: string }) => ({
-        id: String(entry.model),
-        name: entry.name,
-      }));
+      models = (modelsData.models || [])
+        .map((entry: { model: string; name?: string }) => ({ id: String(entry.model), name: entry.name }))
+        .filter((model: Model) => isFreeOpenCodeModel(model.id));
       const disabledData = disabledRes.ok ? await disabledRes.json() : { ids: [] };
       disabledIds = disabledData.ids || [];
     } catch {
@@ -69,6 +73,27 @@
     await load();
   }
 
+  async function testModel(id: string) {
+    if (testingModelId) return;
+    testingModelId = id;
+    testError = "";
+    try {
+      const res = await fetch("/api/models/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: `${providerAlias}/${id}`, kind: "llm" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      modelTestResults = { ...modelTestResults, [id]: data.ok ? "ok" : "error" };
+      if (!data.ok) testError = data.error || "Model not reachable";
+    } catch {
+      modelTestResults = { ...modelTestResults, [id]: "error" };
+      testError = "Network error";
+    } finally {
+      testingModelId = null;
+    }
+  }
+
   function handleDisableAll() {
     if (displayModels.length === 0) return;
     confirmState = {
@@ -94,13 +119,17 @@
     </Button>
   </div>
 
+  {#if testError}
+    <p class="text-xs text-red-500 mb-3 break-words">{testError}</p>
+  {/if}
+
   {#if loading}
     <p class="text-sm text-text-muted flex items-center gap-2">
       <span class="material-symbols-outlined animate-spin text-sm">progress_activity</span>
       Loading models…
     </p>
   {:else if models.length === 0}
-    <p class="text-sm text-text-muted">No models discovered from the catalogue.</p>
+    <p class="text-sm text-text-muted">No free models in the catalogue right now.</p>
   {:else}
     <div class="flex flex-wrap gap-3">
       {#each displayModels as model (model.id)}
@@ -109,6 +138,9 @@
           fullModel="{providerAlias}/{model.id}"
           {copied}
           onCopy={copy}
+          testStatus={modelTestResults[model.id]}
+          onTest={() => testModel(model.id)}
+          isTesting={testingModelId === model.id}
           onDisable={() => disableModels([model.id])}
         />
       {/each}

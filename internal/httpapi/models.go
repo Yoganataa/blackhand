@@ -1,9 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // The single provider in scope exposes its models under this public prefix.
@@ -97,4 +101,89 @@ func (a *API) modelsCatalogue(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, 200, map[string]any{"models": list})
+}
+
+// internalTestKey returns an active unrestricted key for the loopback test call, or "" when no such
+// key exists (the router may also run without key enforcement).
+func (a *API) internalTestKey(ctx context.Context) string {
+	keys, err := a.store.GetAPIKeys(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, key := range keys {
+		if key.IsActive && !key.Access.Restricted {
+			return key.Key
+		}
+	}
+	return ""
+}
+
+// modelTest mirrors 9Router's POST /api/models/test: it pings the model through this router's own
+// inference pipeline with a minimal non-streaming completion, so the verdict reflects the same path a
+// real request takes (including the configured outbound proxy).
+func (a *API) modelTest(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Model string `json:"model"`
+		Kind  string `json:"kind"`
+	}
+	if err := decodeJSON(w, r, &body, 64<<10); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "Invalid JSON"})
+		return
+	}
+	model := strings.TrimSpace(body.Model)
+	if model == "" {
+		writeJSON(w, 400, map[string]string{"error": "Model required"})
+		return
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"model":      model,
+		"messages":   []map[string]string{{"role": "user", "content": "ping"}},
+		"max_tokens": 1,
+		"stream":     false,
+	})
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"ok": false, "error": "Could not encode the test request"})
+		return
+	}
+
+	timeout := 30 * time.Second
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+a.cfg.Address()+"/v1/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"ok": false, "error": "Could not build the test request"})
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if key := a.internalTestKey(r.Context()); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"ok": false, "error": "Model not reachable"})
+		return
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	if resp.StatusCode/100 == 2 {
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
+	}
+
+	var parsed struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &parsed)
+	message := strings.TrimSpace(parsed.Error.Message)
+	if message == "" {
+		message = strings.TrimSpace(string(raw))
+	}
+	if message == "" {
+		message = "Model not reachable"
+	}
+	writeJSON(w, 200, map[string]any{"ok": false, "error": message})
 }

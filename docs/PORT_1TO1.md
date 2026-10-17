@@ -214,18 +214,34 @@ checkout, and the registry subset in `web/src/lib/providers.ts` (id, name, colou
   through the browser: disabling `big-pickle` persisted `{"ids":["big-pickle"]}` and restoring it
   cleared the set again.
 
-Two deviations inside the models card, recorded rather than hidden: the FREE badge, per-model
-capability badges and thinking suffix are absent because the catalogue this port fetches carries no
-`isFree`, caps or thinking metadata; and `/api/models` does not filter the disabled set out of its
-response, because the card needs the full list to offer restoring a model, where upstream's route
-filters it for its other consumers.
+The card lists only the provider's free models, using the same rule upstream applies in
+`api/providers/suggested-models/filters.js` (`opencode-free`): an id ending in `-free` or in the known
+list (`big-pickle`), minus the ids upstream treats as dead (`deepseek-v4-flash-free`). The per-model
+Test action posts to `/api/models/test`, which pings the model through this router's own inference
+pipeline (a minimal non-streaming completion over loopback, carrying an internal unrestricted key) and
+returns `{ok, error}` exactly like upstream's ping; the tile turns red/green and the error text is
+shown under the heading.
+
+Also fixed here: the area content now remounts when the dashboard session changes, because signing in
+through the overlay used to leave a page holding the data it had fetched while unauthenticated.
+
+Deviations recorded rather than hidden: the FREE badge, per-model capability badges and the thinking
+suffix are absent because the catalogue this port fetches carries no `isFree`, caps or thinking
+metadata; and `/api/models` does not filter the disabled set out of its response, because the card
+needs the full list to offer restoring a model, where upstream's route filters it for its other
+consumers.
+
+Found while testing the model ping: the registry's built-in transport header for this provider
+(`x-opencode-client: desktop`) is stored and shown in the Custom Headers card but is **not applied to
+upstream requests yet** — the Test call came back with the upstream's own "OpenCode's free tier can
+only be used from within OpenCode" message. Applying the effective header set (built-in overrides plus
+user overrides) on the request path is the next step in this area.
 
 Still open in this area, absent rather than faked:
 
 - **Model extras** — thinking selector (`settings.providerThinking` plus
-  `open-sse/providers/thinkingLevels.js`), "Suggested free models", "Add Model" with custom models and
-  aliases (`/api/models/custom`, `/api/models/alias`), and the per-model Test action
-  (`/api/models/test`).
+  `open-sse/providers/thinkingLevels.js`), "Suggested free models" as separate add-chips, and "Add
+  Model" with custom models and aliases (`/api/models/custom`, `/api/models/alias`).
 - **Connections** — list, add, edit, delete, bulk import, per-connection proxy pool binding and
   cooldown display (`/api/providers` POST/PUT/DELETE already have an upstream contract to match).
 - **Batch actions** — "Test All" and `/api/providers/test-batch`.
