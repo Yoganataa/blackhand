@@ -367,25 +367,22 @@ func filterGitLog(input string) string {
 	return strings.Join(out, "\n")
 }
 var (
-	cargoErrorContinuation = regexp.MustCompile(`^\\s*(-->|\\||\\d+\\s*\\||=)`)
-	buildCountSummary = regexp.MustCompile(`^(added|removed|changed|audited|installed)\\s+\\d+\\s+package`)
-	buildSimpleSummary = regexp.MustCompile(`^\\d+\\s+(vulnerabilities|packages?|warnings?|errors?)`)
-	buildAddressSummary = regexp.MustCompile(`^To address .* issues`)
-	buildNpmCommandSummary = regexp.MustCompile("` + "`" + `^Run \\`npm (audit|fund)\\`` + "`" + `)
+	cargoErrorContinuation = regexp.MustCompile(`^\s*(-->|[|]|[0-9]+\s*[|]|=)`)
+	buildCountSummary = regexp.MustCompile(`(?i)^(added|removed|changed|audited|installed)\s+[0-9]+\s+package`)
+	buildSimpleSummary = regexp.MustCompile(`(?i)^[0-9]+\s+(vulnerabilities|packages?|warnings?|errors?)`)
+	buildAddressSummary = regexp.MustCompile(`(?i)^To address .* issues`)
+	buildNpmCommandSummary = regexp.MustCompile("(?i)^Run \x60npm (audit|fund)\x60")
 )
 
 func filterBuildOutput(input string) string {
 	// Ported from Yoganataa/9router open-sse/rtk/filters/buildOutput.js
-	// at db6112897399ac981ca73ed573d14102e84ca0f1. Keep the grouping/order
-	// stable so the fixture tests protect byte-for-byte compatibility here.
-	errorsOut := []string{}
-	warnings := []string{}
-	deprecations := []string{}
-	summary := []string{}
+	// at db6112897399ac981ca73ed573d14102e84ca0f1. This fixture-backed port
+	// keeps the upstream grouping and ordering stable for supported build output.
+	errorsOut, warnings, deprecations, summaries := []string{}, []string{}, []string{}, []string{}
 	compilingCount, downloadingCount := 0, 0
 	inCargoError := false
 
-	for _, line := range strings.Split(input, "\\n") {
+	for _, line := range strings.Split(input, "\n") {
 		trimmed := strings.TrimSpace(line)
 		lower := strings.ToLower(trimmed)
 
@@ -422,30 +419,31 @@ func filterBuildOutput(input string) string {
 			warnings = append(warnings, line)
 			inCargoError = true
 			continue
-		case strings.HasPrefix(lower, "error:"):
-			errorsOut = append(errorsOut, line)
-			continue
 		case strings.HasPrefix(lower, "[error]") || strings.HasPrefix(lower, "build failed"):
 			errorsOut = append(errorsOut, line)
 			continue
 		case strings.HasPrefix(lower, "[warning]"):
 			warnings = append(warnings, line)
 			continue
-		case strings.HasPrefix(lower, "compiling ") && hasBuildTokenAfterPrefix(trimmed, "compiling "):
+		case strings.HasPrefix(lower, "compiling ") && strings.TrimSpace(strings.TrimPrefix(lower, "compiling ")) != "":
 			compilingCount++
 			continue
-		case strings.HasPrefix(lower, "downloading ") && hasBuildTokenAfterPrefix(trimmed, "downloading "):
+		case strings.HasPrefix(lower, "downloading ") && strings.TrimSpace(strings.TrimPrefix(lower, "downloading ")) != "":
 			downloadingCount++
 			continue
 		case strings.HasPrefix(lower, "fetching "):
 			downloadingCount++
 			continue
-		case buildCountSummary.MatchString(lower) || strings.HasPrefix(lower, "finished ") ||
-			strings.HasPrefix(lower, "build success") || strings.HasPrefix(lower, "successfully installed") ||
-			strings.HasPrefix(lower, "successfully built") || buildSimpleSummary.MatchString(lower) ||
-			buildAddressSummary.MatchString(trimmed) || buildNpmCommandSummary.MatchString(trimmed) ||
+		case buildCountSummary.MatchString(trimmed) ||
+			strings.HasPrefix(lower, "finished ") ||
+			strings.HasPrefix(lower, "build success") ||
+			strings.HasPrefix(lower, "successfully installed") ||
+			strings.HasPrefix(lower, "successfully built") ||
+			buildSimpleSummary.MatchString(trimmed) ||
+			buildAddressSummary.MatchString(trimmed) ||
+			buildNpmCommandSummary.MatchString(trimmed) ||
 			strings.Contains(lower, "packages are looking for funding"):
-			summary = append(summary, line)
+			summaries = append(summaries, line)
 			continue
 		}
 	}
@@ -476,15 +474,11 @@ func filterBuildOutput(input string) string {
 	if len(warnings) > 5 {
 		out = append(out, fmt.Sprintf("... +%d more warnings", len(warnings)-5))
 	}
-	out = append(out, summary...)
+	out = append(out, summaries...)
 	if len(out) == 0 {
 		return input
 	}
-	return strings.Join(out, "\\n")
-}
-
-func hasBuildTokenAfterPrefix(line, prefix string) bool {
-	return len(strings.TrimSpace(strings.TrimPrefix(strings.ToLower(line), prefix))) > 0
+	return strings.TrimRight(strings.Join(out, "\n"), "\n")
 }
 
 func looksLikeGrep(input string) bool {
