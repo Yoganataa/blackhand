@@ -159,12 +159,8 @@ func (a *API) consoleLogsStream(w http.ResponseWriter,r *http.Request){
 	w.Header().Set("Content-Type","text/event-stream");w.Header().Set("Cache-Control","no-cache, no-transform");w.Header().Set("Connection","keep-alive");w.Header().Set("X-Accel-Buffering","no")
 	flusher,ok:=w.(http.Flusher);if !ok{http.Error(w,"streaming not supported",500);return}
 	id,ch,logs:=a.subscribeLogs();defer a.unsubscribeLogs(id)
-	if len(logs)>0{raw,_:=json.Marshal(map[string]any{"type":"init","logs":logs});_,_=fmt.Fprintf(w,"data: %s
-
-",raw);flusher.Flush()}
+	if len(logs)>0{raw,_:=json.Marshal(map[string]any{"type":"init","logs":logs});_,_=fmt.Fprintf(w,"data: %s\n\n",raw);flusher.Flush()}
 	ping:=time.NewTicker(25*time.Second);defer ping.Stop()
-	for{select{case<-r.Context().Done():return;case event:=<-ch:raw,_:=json.Marshal(map[string]any{"type":event.Type,"line":event.Line});_,_=fmt.Fprintf(w,"data: %s
-
-",raw);flusher.Flush();case<-ping.C:_,_=io.WriteString(w,": ping\n\n");flusher.Flush()}}
+	for{select{case<-r.Context().Done():return;case event:=<-ch:raw,_:=json.Marshal(map[string]any{"type":event.Type,"line":event.Line});_,_=fmt.Fprintf(w,"data: %s\n\n",raw);flusher.Flush();case<-ping.C:_,_=io.WriteString(w,": ping\n\n");flusher.Flush()}}
 }
 
