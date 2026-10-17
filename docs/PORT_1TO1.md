@@ -231,11 +231,29 @@ metadata; and `/api/models` does not filter the disabled set out of its response
 needs the full list to offer restoring a model, where upstream's route filters it for its other
 consumers.
 
-Found while testing the model ping: the registry's built-in transport header for this provider
-(`x-opencode-client: desktop`) is stored and shown in the Custom Headers card but is **not applied to
-upstream requests yet** — the Test call came back with the upstream's own "OpenCode's free tier can
-only be used from within OpenCode" message. Applying the effective header set (built-in overrides plus
-user overrides) on the request path is the next step in this area.
+Free-tier fingerprint, implemented from the upstream pull requests that address this exact refusal
+(`fix(opencode): refresh the client fingerprint to the 2.0 channel form` #4883 and
+`fix(opencode-zen): align free-tier v2 headers` #4860, both still open on the reference repo):
+
+- `User-Agent: opencode/latest/2.0.29/cli` and `x-opencode-client: cli` (the v1 forms are refused),
+- `x-opencode-project: global` and the v2 session set — `x-opencode-session` plus
+  `x-opencode-session-id`, `x-session-affinity`, `x-session-id` carrying the same `ses_…` id,
+- `Authorization: Bearer public` for the free tier unless an upstream key is configured,
+- free models (`-free` base id, `isOpencodeFreeTierModel` in upstream terms) routed to
+  `https://opencode.ai/inference/v1/chat/completions` instead of the `/zen/v1` lane, with the request
+  forced to `stream: true` and OpenCode's own `read`/`shell` tool definitions appended verbatim, plus
+  the placeholder note that tells the model not to call them.
+
+All of that is pinned by tests in `internal/provider/opencode/fingerprint_test.go` and
+`fingerprint_proxy_test.go`, which assert the exact path, headers and body this port puts on the wire.
+
+Live result, recorded honestly: after the change the upstream still answers
+`OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep
+building.` So the classification is not satisfied by the headers and body those two PRs describe — the
+gate evidently distinguishes the official client by something this port cannot reproduce from a
+request, or by a newer fingerprint than the pinned `2.0.29`. Until that is answered, free-tier
+inference through this port fails with the upstream's own message, and the model Test action surfaces
+it correctly instead of pretending to work. This is an open gap, not a solved one.
 
 Still open in this area, absent rather than faked:
 

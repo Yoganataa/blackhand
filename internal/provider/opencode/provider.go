@@ -68,14 +68,27 @@ func(p *Provider)ProxyChatWithOptions(w http.ResponseWriter,r *http.Request,opti
 	body,err:=io.ReadAll(http.MaxBytesReader(w,r.Body,16<<20))
 	if err!=nil{http.Error(w,"request body is too large or invalid",http.StatusRequestEntityTooLarge);result.Error="request body invalid";return result}
 	var payload map[string]json.RawMessage
+	internalModel:=""
+	freeTier:=false
 	if json.Unmarshal(body,&payload)==nil{
 		var model string
-		if raw,ok:=payload["model"];ok&&json.Unmarshal(raw,&model)==nil&&strings.HasPrefix(model,"oc/"){
-			encoded,_:=json.Marshal(strings.TrimPrefix(model,"oc/"));payload["model"]=encoded
+		if raw,ok:=payload["model"];ok&&json.Unmarshal(raw,&model)==nil{
+			internalModel=strings.TrimPrefix(model,"oc/")
+			if internalModel!=model{
+				encoded,_:=json.Marshal(internalModel);payload["model"]=encoded
+			}
+			// Free-tier models are served on the inference lane and the upstream gate classifies the
+			// request by the client fingerprint carried in the body; see fingerprint.go.
+			if freeTier=isFreeTierModel(internalModel);freeTier{
+				_ = applyFingerprintTools(payload)
+			}
 			if rewritten,e:=json.Marshal(payload);e==nil{body=rewritten}
 		}
 	}
-	target:=strings.TrimRight(p.cfg.UpstreamBaseURL,"/")+"/chat/completions"
+	baseURL:=p.cfg.UpstreamBaseURL
+	if freeTier{baseURL=freeTierUpstreamBase(baseURL)}
+	target:=strings.TrimRight(baseURL,"/")+"/chat/completions"
+	sessionID:=newSessionID()
 	targetURL,parseErr:=url.Parse(target)
 	if parseErr!=nil { http.Error(w,"invalid upstream URL",502); result.Error="invalid upstream URL"; return result }
 	relayURL:=strings.TrimSpace(options.RelayURL)
@@ -91,7 +104,7 @@ func(p *Provider)ProxyChatWithOptions(w http.ResponseWriter,r *http.Request,opti
 		if err!=nil{return nil,err}
 		req.ContentLength=int64(len(body))
 		for _,header:=range []string{"Content-Type","Accept"}{if value:=r.Header.Get(header);value!=""{req.Header.Set(header,value)}}
-		if p.cfg.UpstreamAPIKey!=""{req.Header.Set("Authorization","Bearer "+p.cfg.UpstreamAPIKey)}
+		applyFingerprintHeaders(req.Header,p.cfg.UpstreamAPIKey,sessionID)
 		if relayURL!="" {
 			req.Header.Set("x-relay-target",targetURL.Scheme+"://"+targetURL.Host)
 			req.Header.Set("x-relay-path",targetURL.RequestURI())
@@ -126,7 +139,7 @@ func(p *Provider)ProxyChatWithOptions(w http.ResponseWriter,r *http.Request,opti
 			if buildErr==nil{
 				directReq.ContentLength=int64(len(body))
 				for _,header:=range []string{"Content-Type","Accept"}{if value:=r.Header.Get(header);value!=""{directReq.Header.Set(header,value)}}
-				if p.cfg.UpstreamAPIKey!=""{directReq.Header.Set("Authorization","Bearer "+p.cfg.UpstreamAPIKey)}
+				applyFingerprintHeaders(directReq.Header,p.cfg.UpstreamAPIKey,sessionID)
 				resp,err=p.upstreamClient.Do(directReq)
 			}
 		}
