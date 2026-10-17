@@ -54,6 +54,16 @@ func tokenFloat(tokens map[string]any, keys ...string) float64 {
 	}
 	return 0
 }
+func dbTimestamp(t time.Time) string {
+	return t.UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+func normalizeDBTimestamp(value string) string {
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil { return value }
+	return dbTimestamp(t)
+}
+
 func maskUsageKey(key string) any {
 	if key == "" { return nil }
 	if len(key) <= 12 { return key[:1] + "***" }
@@ -62,6 +72,7 @@ func maskUsageKey(key string) any {
 
 func (s *Store) SaveRequestUsage(ctx context.Context, entry UsageEntry) error {
 	if entry.Timestamp == "" { entry.Timestamp = nowISO() }
+	entry.Timestamp = normalizeDBTimestamp(entry.Timestamp)
 	if entry.Status == "" { entry.Status = "ok" }
 	if entry.Tokens == nil { entry.Tokens = map[string]any{} }
 	prompt := tokenInt(entry.Tokens, "prompt_tokens", "input_tokens")
@@ -178,7 +189,7 @@ func aggregateUsageDay(day map[string]any, entry UsageEntry, prompt, completion,
 	apiKey:=entry.APIKey
 	if apiKey=="" { apiKey="local-no-key" }
 	apiKeyKey:=apiKey+"|"+entry.Model+"|"+defaultString(entry.Provider,"unknown")
-	mapCounter(usageMap(day,"byApiKey"),apiKeyKey,prompt,completion,cached,entry.Cost,map[string]any{"rawModel":entry.Model,"provider":entry.Provider,"apiKey":entry.APIKey,"lastUsed":entry.Timestamp})
+	mapCounter(usageMap(day,"byApiKey"),apiKeyKey,prompt,completion,cached,entry.Cost,map[string]any{"rawModel":entry.Model,"provider":entry.Provider,"lastUsed":entry.Timestamp})
 	endpoint:=defaultString(entry.Endpoint,"Unknown")
 	endpointKey:=endpoint+"|"+entry.Model+"|"+defaultString(entry.Provider,"unknown")
 	mapCounter(usageMap(day,"byEndpoint"),endpointKey,prompt,completion,cached,entry.Cost,map[string]any{"endpoint":endpoint,"rawModel":entry.Model,"provider":entry.Provider,"lastUsed":entry.Timestamp})
@@ -189,11 +200,11 @@ func (s *Store) GetUsageHistory(ctx context.Context, filter UsageFilter) ([]map[
 	args:=[]any{}
 	if filter.Provider!="" { conditions=append(conditions,"provider=?"); args=append(args,filter.Provider) }
 	if filter.Model!="" { conditions=append(conditions,"model=?"); args=append(args,filter.Model) }
-	if filter.StartDate!="" { t,err:=time.Parse(time.RFC3339,filter.StartDate); if err!=nil { t,err=time.Parse("2006-01-02",filter.StartDate) }; if err!=nil{return nil,fmt.Errorf("invalid startDate")}; conditions=append(conditions,"timestamp>=?"); args=append(args,t.Format(time.RFC3339Nano)) }
-	if filter.EndDate!="" { t,err:=time.Parse(time.RFC3339,filter.EndDate); if err!=nil { t,err=time.Parse("2006-01-02",filter.EndDate) }; if err!=nil{return nil,fmt.Errorf("invalid endDate")}; conditions=append(conditions,"timestamp<=?"); args=append(args,t.Format(time.RFC3339Nano)) }
+	if filter.StartDate!="" { t,err:=time.Parse(time.RFC3339,filter.StartDate); if err!=nil { t,err=time.Parse("2006-01-02",filter.StartDate) }; if err!=nil{return nil,fmt.Errorf("invalid startDate")}; conditions=append(conditions,"timestamp>=?"); args=append(args,dbTimestamp(t)) }
+	if filter.EndDate!="" { t,err:=time.Parse(time.RFC3339,filter.EndDate); if err!=nil { t,err=time.Parse("2006-01-02",filter.EndDate) }; if err!=nil{return nil,fmt.Errorf("invalid endDate")}; conditions=append(conditions,"timestamp<=?"); args=append(args,dbTimestamp(t)) }
 	query:=`SELECT timestamp,provider,model,connectionId,apiKey,endpoint,cost,status,tokens,promptTokens,completionTokens FROM usageHistory`
 	if len(conditions)>0 { query+=" WHERE "+strings.Join(conditions," AND ") }
-	query+=" ORDER BY id DESC"
+	query+=" ORDER BY timestamp DESC"
 	if filter.Limit>0 && filter.Limit<=10000 { query += fmt.Sprintf(" LIMIT %d",filter.Limit) }
 	rows,err:=s.DB.QueryContext(ctx,query,args...)
 	if err!=nil{return nil,err}
@@ -224,8 +235,8 @@ func (s *Store) getUsageStatsLegacy(ctx context.Context, period string) (map[str
 	}
 	query:=`SELECT timestamp,provider,model,connectionId,apiKey,endpoint,cost,status,tokens,promptTokens,completionTokens FROM usageHistory`
 	args:=[]any{}
-	if !cutoff.IsZero(){query+=" WHERE timestamp>=?";args=append(args,cutoff.UTC().Format(time.RFC3339Nano))}
-	query+=" ORDER BY id DESC"
+	if !cutoff.IsZero(){query+=" WHERE timestamp>=?";args=append(args,dbTimestamp(cutoff))}
+	query+=" ORDER BY timestamp DESC"
 	rows,err:=s.DB.QueryContext(ctx,query,args...)
 	if err!=nil{return nil,err}
 	defer rows.Close()
@@ -264,9 +275,14 @@ func (s *Store) getUsageStatsLegacy(ctx context.Context, period string) (map[str
 		modelKey:=defaultString(mv,"unknown");if pv!=""{modelKey+=" ("+pv+")"}
 		mapCounter(models,modelKey,prompt2,completion2,cached,cost,map[string]any{"rawModel":mv,"provider":pv,"lastUsed":ts.String})
 		apiKeyMasked:=maskUsageKey(kv)
-		apiKeyKey:=kv+"|"+mv+"|"+defaultString(pv,"unknown")
-		if kv==""{apiKeyKey="local-no-key"}
-		mapCounter(keys,apiKeyKey,prompt2,completion2,cached,cost,map[string]any{"rawModel":mv,"provider":pv,"apiKeyMasked":apiKeyMasked,"apiKeyKey":apiKeyMasked,"keyName":map[bool]string{true:"Local (No API Key)",false:func()string{if len(kv)>8{return kv[:8]+"..."};return kv}()}[kv==""] ,"lastUsed":ts.String})
+		apiKeyKey:="local-no-key"
+		keyName:="Local (No API Key)"
+		if kv!="" {
+			safeMask,_:=apiKeyMasked.(string)
+			apiKeyKey=safeMask+"|"+mv+"|"+defaultString(pv,"unknown")
+			if len(kv)>8 { keyName=kv[:8]+"..." } else { keyName=kv }
+		}
+		mapCounter(keys,apiKeyKey,prompt2,completion2,cached,cost,map[string]any{"rawModel":mv,"provider":pv,"apiKeyMasked":apiKeyMasked,"apiKeyKey":apiKeyMasked,"keyName":keyName,"lastUsed":ts.String})
 		ep:=defaultString(ev,"Unknown")
 		mapCounter(endpoints,ep+"|"+mv+"|"+defaultString(pv,"unknown"),prompt2,completion2,cached,cost,map[string]any{"endpoint":ep,"rawModel":mv,"provider":pv,"lastUsed":ts.String})
 		if t,err:=time.Parse(time.RFC3339Nano,ts.String);err==nil {
@@ -316,7 +332,7 @@ func (s *Store) getChartDataHourlyLegacy(ctx context.Context, period string) ([]
 		out[i]=map[string]any{"label":label,"tokens":int64(0),"cost":float64(0),"requests":int64(0)}
 	}
 	end:=now.Add(time.Second)
-	rows,err:=s.DB.QueryContext(ctx,"SELECT timestamp,promptTokens,completionTokens,cost FROM usageHistory WHERE timestamp>=? AND timestamp<?",start.UTC().Format(time.RFC3339Nano),end.UTC().Format(time.RFC3339Nano))
+	rows,err:=s.DB.QueryContext(ctx,"SELECT timestamp,promptTokens,completionTokens,cost FROM usageHistory WHERE timestamp>=? AND timestamp<?",dbTimestamp(start),dbTimestamp(end))
 	if err!=nil{return nil,err};defer rows.Close()
 	for rows.Next(){
 		var ts string;var p,c int64;var cost float64

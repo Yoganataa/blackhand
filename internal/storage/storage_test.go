@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,6 +83,13 @@ func TestUsageHistoryIsIdempotentAndChartable(t *testing.T) {
 	history,err:=s.GetUsageHistory(context.Background(),UsageFilter{});if err!=nil{t.Fatal(err)}
 	if len(history)!=1{t.Fatalf("history rows = %d",len(history))}
 	if history[0]["apiKeyMasked"]=="secret-key-for-test"{t.Fatal("raw API key leaked in usage history")}
+	encodedStats,err:=json.Marshal(stats);if err!=nil{t.Fatal(err)}
+	if strings.Contains(string(encodedStats),"secret-key-for-test"){t.Fatalf("raw API key leaked in usage stats: %s",encodedStats)}
+	byKey,ok:=stats["byApiKey"].(map[string]any);if !ok{t.Fatalf("byApiKey has unexpected type: %T",stats["byApiKey"])}
+	for groupedKey:=range byKey { if strings.Contains(groupedKey,"secret-key-for-test"){t.Fatalf("raw API key leaked as grouping key: %q",groupedKey)} }
+	stats24,err:=s.GetUsageStats(context.Background(),"24h");if err!=nil{t.Fatal(err)}
+	encoded24,err:=json.Marshal(stats24);if err!=nil{t.Fatal(err)}
+	if strings.Contains(string(encoded24),"secret-key-for-test"){t.Fatalf("raw API key leaked in rolling 24h stats: %s",encoded24)}
 }
 
 func TestExistingScaffoldDatabaseIsBackedUpAndImported(t *testing.T) {
@@ -111,4 +119,31 @@ INSERT INTO usage_events(created_at,provider,model,status,prompt_tokens,completi
 	if numberValue(stats["totalRequests"])!=1{t.Fatalf("legacy rollup totalRequests = %#v",stats["totalRequests"])}
 	backups,err:=os.ReadDir(filepath.Join(dataDir,"db","backups"));if err!=nil{t.Fatal(err)}
 	if len(backups)==0{t.Fatal("missing pre-migration database backup")}
+}
+
+
+func TestUsageTimestampBoundariesAreConsistent(t *testing.T) {
+	t.Setenv("NINEROUTER_API_KEY", "")
+	s,err:=Open(filepath.Join(t.TempDir(),"data"));if err!=nil{t.Fatal(err)};defer s.Close()
+	minute:=time.Now().UTC().Truncate(time.Minute)
+	entry:=UsageEntry{
+		Timestamp:minute.Format(time.RFC3339Nano),
+		Provider:"opencode",Model:"oc/boundary",Status:"200",
+		Tokens:map[string]any{"prompt_tokens":float64(3),"completion_tokens":float64(2)},
+	}
+	if err:=s.SaveRequestUsage(context.Background(),entry);err!=nil{t.Fatal(err)}
+	var stored string
+	if err:=s.DB.QueryRow("SELECT timestamp FROM usageHistory LIMIT 1").Scan(&stored);err!=nil{t.Fatal(err)}
+	if !strings.HasSuffix(stored,".000Z"){t.Fatalf("timestamp not normalized to fixed UTC milliseconds: %q",stored)}
+	for _,period:=range []string{"today","24h","all"} {
+		stats,err:=s.GetUsageStats(context.Background(),period);if err!=nil{t.Fatalf("stats %s: %v",period,err)}
+		if numberValue(stats["totalRequests"])!=1{t.Fatalf("%s omitted record on timestamp boundary: %#v",period,stats["totalRequests"])}
+	}
+	stats,err:=s.GetUsageStats(context.Background(),"all");if err!=nil{t.Fatal(err)}
+	last10,ok:=stats["last10Minutes"].([]any);if !ok{t.Fatalf("last10Minutes type = %T",stats["last10Minutes"])}
+	requests:=float64(0);for _,raw:=range last10{if bucket,ok:=raw.(map[string]any);ok{requests+=numberValue(bucket["requests"])}}
+	if requests!=1{t.Fatalf("last 10-minute buckets lost current-minute event: requests=%v",requests)}
+	chart,err:=s.GetChartData(context.Background(),"today");if err!=nil{t.Fatal(err)}
+	chartRequests:=float64(0);for _,bucket:=range chart{chartRequests+=numberValue(bucket["requests"])}
+	if chartRequests!=1{t.Fatalf("today chart omitted event at minute boundary: requests=%v",chartRequests)}
 }

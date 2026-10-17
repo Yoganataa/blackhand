@@ -113,6 +113,22 @@ func mergeUsageMap(target map[string]any,raw any,field string) {
 		item,ok := value.(map[string]any)
 		if !ok { continue }
 		key := sourceKey
+		rawAPIKey := ""
+		if field == "byApiKey" {
+			rawAPIKey,_ = item["apiKey"].(string) // Older rollups may include private grouping metadata.
+			parts := strings.SplitN(sourceKey,"|",3)
+			if rawAPIKey == "" && !strings.HasPrefix(sourceKey,"local-no-key|") && sourceKey != "local-no-key" && len(parts)>0 {
+				rawAPIKey = parts[0]
+			}
+			if rawAPIKey == "" || rawAPIKey == "local-no-key" {
+				key = "local-no-key"
+			} else {
+				modelPart, providerPart := "", "unknown"
+				if len(parts)>1 { modelPart=parts[1] }
+				if len(parts)>2 && parts[2]!="" { providerPart=parts[2] }
+				key = fmt.Sprintf("%v|%s|%s", maskUsageKey(rawAPIKey), modelPart, providerPart)
+			}
+		}
 		if field == "byModel" {
 			model,_ := item["rawModel"].(string)
 			provider,_ := item["provider"].(string)
@@ -131,7 +147,8 @@ func mergeUsageMap(target map[string]any,raw any,field string) {
 		}
 		for metaKey,metaValue := range item {
 			switch metaKey {
-			case "requests","promptTokens","completionTokens","cachedTokens","cost":
+			case "requests","promptTokens","completionTokens","cachedTokens","cost","apiKey":
+				// Older rollups stored credentials in metadata; never return them.
 				continue
 			case "lastUsed":
 				old,_ := existing[metaKey].(string)
@@ -142,15 +159,15 @@ func mergeUsageMap(target map[string]any,raw any,field string) {
 			}
 		}
 		if field == "byApiKey" {
-			if sourceKey == "local-no-key" {
+			if rawAPIKey == "" || rawAPIKey == "local-no-key" {
 				existing["apiKeyMasked"] = nil
 				existing["apiKeyKey"] = nil
 				existing["keyName"] = "Local (No API Key)"
 			} else {
-				rawKey := strings.SplitN(sourceKey,"|",2)[0]
-				existing["apiKeyMasked"] = maskUsageKey(rawKey)
-				existing["apiKeyKey"] = maskUsageKey(rawKey)
-				if len(rawKey)>8 { existing["keyName"]=rawKey[:8]+"..." } else { existing["keyName"]=rawKey }
+				masked := maskUsageKey(rawAPIKey)
+				existing["apiKeyMasked"] = masked
+				existing["apiKeyKey"] = masked
+				if len(rawAPIKey)>8 { existing["keyName"]=rawAPIKey[:8]+"..." } else { existing["keyName"]=rawAPIKey }
 			}
 		}
 	}
@@ -166,7 +183,7 @@ func (s *Store) getLastTenMinutes(ctx context.Context,now time.Time)([]any,error
 		buckets[i] = b
 		index[at.Unix()/60] = b
 	}
-	rows,err := s.DB.QueryContext(ctx,"SELECT timestamp,promptTokens,completionTokens,cost FROM usageHistory WHERE timestamp>=? AND timestamp<=? ORDER BY timestamp ASC",start.UTC().Format(time.RFC3339Nano),now.Add(time.Second).UTC().Format(time.RFC3339Nano))
+	rows,err := s.DB.QueryContext(ctx,"SELECT timestamp,promptTokens,completionTokens,cost FROM usageHistory WHERE timestamp>=? AND timestamp<=? ORDER BY timestamp ASC",dbTimestamp(start),dbTimestamp(now.Add(time.Second)))
 	if err != nil { return nil,err }
 	defer rows.Close()
 	for rows.Next() {
@@ -190,8 +207,8 @@ func (s *Store) getRecentRequestsSince(ctx context.Context,start time.Time,limit
 	if limit<=0||limit>100{limit=20}
 	query:="SELECT timestamp,provider,model,status,tokens,promptTokens,completionTokens FROM usageHistory"
 	args:=[]any{}
-	if !start.IsZero(){query+=" WHERE timestamp>=?";args=append(args,start.UTC().Format(time.RFC3339Nano))}
-	query+=" ORDER BY id DESC LIMIT 100"
+	if !start.IsZero(){query+=" WHERE timestamp>=?";args=append(args,dbTimestamp(start))}
+	query+=" ORDER BY timestamp DESC LIMIT 100"
 	rows,err:=s.DB.QueryContext(ctx,query,args...)
 	if err!=nil{return nil,err}
 	defer rows.Close()
