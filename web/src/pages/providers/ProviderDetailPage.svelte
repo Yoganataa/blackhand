@@ -6,6 +6,7 @@
   import { onMount } from "svelte";
   import { providerInfo } from "../../lib/providers";
   import ProviderIcon from "../../ui/ProviderIcon.svelte";
+  import CustomConfigCard from "./components/CustomConfigCard.svelte";
   import NoAuthProxyCard from "./components/NoAuthProxyCard.svelte";
 
   let { providerId }: { providerId: string } = $props();
@@ -86,5 +87,7 @@
     {#if provider.noAuth}
       <NoAuthProxyCard providerId={provider.id} />
     {/if}
+
+    <CustomConfigCard providerId={provider.id} />
   </div>
 {/if}

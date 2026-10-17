@@ -82,7 +82,7 @@ Each phase ends with: `go test -race ./...`, `go vet ./...`, `npm run check`, `n
 | 0 | Reference checkout, surface inventory, pin recorded, 1:1 checklist | done — checkout at `87a74e1` (v0.5.104) |
 | 1 | FE foundation: Tailwind v4 + upstream theme tokens, shell (`Sidebar`/`Header`/`DashboardLayout`) in Svelte, `/dashboard/*` routing, only in-scope nav | foundation built and checked; shell not yet wired into `App.svelte` |
 | 2 | Setting (`/dashboard/profile`) + Endpoint & Key (incl. tunnel/Tailscale) | Endpoint & Key page ported; Setting ported for Local Mode + Security only. Open: tunnel/Tailscale rows, the shared model picker, and the rest of the profile cards. |
-| 3 | Providers — OpenCode Free: list + detail, connections, model enable/disable/alias/custom, proxy pool binding, custom headers | Free Tier list, the detail header and the no-auth proxy card are ported; connections, models card, custom headers and batch test are open. |
+| 3 | Providers — OpenCode Free: list + detail, connections, model enable/disable/alias/custom, proxy pool binding, custom headers | Free Tier list, detail header, no-auth proxy card and custom headers are ported; connections, models card and batch test are open. |
 | 4 | Usage + pricing settings page (per-connection limits, topology, request details) | not started |
 | 5 | Token Saver (RTK filter parity re-fixtured from official, Headroom/PXPIPE lifecycle) | not started |
 | 6 | Proxy Pools (relay deploys, provider/connection binding) | not started |
@@ -198,10 +198,17 @@ Also carried over: the provider icon asset `public/providers/opencode.png` from 
 checkout, and the registry subset in `web/src/lib/providers.ts` (id, name, colour, text icon,
 `noAuth`, category `freeTier`).
 
+- **Custom Headers** — the collapsible card with add/remove rows, Reset and Save. Overrides live in
+  `settings.providerOverrides[providerId].headers` exactly as upstream stores them, diffed against the
+  registry's built-in transport headers (`x-opencode-client: desktop` for this provider, mirrored from
+  `open-sse/providers/registry/opencode.js`). Validation is server side in
+  `internal/httpapi/provider_overrides.go`: name charset, no CRLF, 20-header cap, 8 KiB value cap, and
+  the blocked set (host, content-length, content-type, connection, transfer-encoding, authorization,
+  cookie), with table tests in `provider_overrides_test.go`. Verified through the browser: saving an
+  override persists it, and Reset + Save clears it again.
+
 Still open in this area, absent rather than faked:
 
-- **Custom Headers** card — needs `GET/PUT /api/providers/{id}/overrides` plus the registry's
-  built-in header set.
 - **Models card** — available models with enable/disable, "Disable All", thinking selector,
   suggested free models and "Add Model": needs `/api/models/disabled`, `/api/models/alias`,
   `/api/models/custom`, `/api/models/test`.
