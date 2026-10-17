@@ -17,6 +17,21 @@
     { name: "Settings", label: "Settings", icon: "settings", description: "Manage access, runtime and network preferences", group: "system" }
   ];
 
+  const sectionPaths: Record<Section, string> = {
+    "Overview": "/dashboard/overview",
+    "Endpoint & Key": "/dashboard/endpoint",
+    "Providers": "/dashboard/providers",
+    "Usage": "/dashboard/usage",
+    "Token Saver": "/dashboard/token-saver",
+    "Console Log": "/dashboard/console-log",
+    "Settings": "/dashboard/profile",
+    "Proxypools": "/dashboard/proxy-pools"
+  };
+  function sectionFromPath(pathname: string): Section {
+    const matched = (Object.entries(sectionPaths) as [Section, string][]).find(([, path]) => path === pathname);
+    return matched?.[0] || "Endpoint & Key";
+  }
+
   let active: Section = "Endpoint & Key";
   let health: "checking" | "online" | "offline" = "checking";
   let authenticated = false;
@@ -113,6 +128,8 @@
     active = section;
     actionError = "";
     successMessage = "";
+    const targetPath = sectionPaths[section];
+    if (window.location.pathname !== targetPath) window.history.pushState({ section }, "", targetPath);
     if (section !== "Console Log") stopConsoleStream();
     if (authenticated) void refreshSection(section);
   }
@@ -308,6 +325,17 @@
   }
 
   onMount(() => {
+    const foundRoute = (Object.values(sectionPaths) as string[]).includes(window.location.pathname);
+    active = sectionFromPath(window.location.pathname);
+    if (!foundRoute) window.history.replaceState({ section: active }, "", sectionPaths[active]);
+    const handlePopState = () => {
+      active = sectionFromPath(window.location.pathname);
+      actionError = "";
+      successMessage = "";
+      if (active !== "Console Log") stopConsoleStream();
+      if (authenticated) void refreshSection(active);
+    };
+    window.addEventListener("popstate", handlePopState);
     try {
       darkTheme = localStorage.getItem("blackhand-theme") === "dark";
       document.documentElement.classList.toggle("dark", darkTheme);
@@ -316,7 +344,10 @@
       await checkHealth();
       await checkSession();
     })();
-    return () => stopConsoleStream();
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      stopConsoleStream();
+    };
   });
 </script>
 
@@ -327,7 +358,7 @@
     <div class="window-controls" aria-label="Window controls">
       <span class="traffic-light red"></span><span class="traffic-light amber"></span><span class="traffic-light green"></span>
     </div>
-    <a class="brand" href="#endpoint" onclick={() => go("Endpoint & Key")}>
+    <a class="brand" href="/dashboard/endpoint" onclick={(event) => { event.preventDefault(); go("Endpoint & Key"); }}>
       <span class="brand-mark"><span class="material-symbols-outlined">hub</span></span>
       <span><strong>9Router</strong><small>BLACKHAND · GO BUILD</small></span>
     </a>
