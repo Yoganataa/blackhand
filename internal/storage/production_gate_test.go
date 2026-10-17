@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +23,24 @@ func tableRowCount(t *testing.T, db *sql.DB, table string) int {
 		t.Fatalf("count %s: %v", table, err)
 	}
 	return count
+}
+
+// assertPrivateBackupMode checks POSIX permission bits where Go and the OS
+// expose them. Windows file mode bits do not represent NTFS ACLs; on Windows
+// the migration tests still verify that the backup exists and can be opened.
+func assertPrivateBackupMode(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Log("Windows backup access is governed by NTFS ACLs; FileMode.Perm is not a POSIX permission check")
+		return
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("backup permissions = %04o, want 0600", got)
+	}
 }
 
 func verifyFixtureRows(t *testing.T, db *sql.DB) {
@@ -145,13 +164,7 @@ func TestUpstreamShapedSchemaFixtureMigrationBackupAndRestore(t *testing.T) {
 		t.Fatal("migration did not create a pre-change backup")
 	}
 	backupPath := filepath.Join(backupDir, backups[0].Name())
-	info, err := os.Stat(backupPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("backup permissions = %04o, want 0600", got)
-	}
+	assertPrivateBackupMode(t, backupPath)
 
 	backupDB, err := sql.Open("sqlite", backupPath)
 	if err != nil {
@@ -577,13 +590,7 @@ func TestSanitizedSuppliedDatabaseShapeMigrationPreservesSettingsUsageAndKey(t *
 		t.Fatalf("backup count = %d, want exactly one pre-migration backup", len(backups))
 	}
 	backupPath := filepath.Join(backupDir, backups[0].Name())
-	info, err := os.Stat(backupPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("backup permissions = %04o, want 0600", info.Mode().Perm())
-	}
+	assertPrivateBackupMode(t, backupPath)
 	backupDB, err := sql.Open("sqlite", backupPath)
 	if err != nil {
 		t.Fatal(err)
