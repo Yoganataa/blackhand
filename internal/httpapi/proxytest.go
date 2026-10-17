@@ -65,8 +65,8 @@ func testRelay(ctx context.Context,relayURL string,started time.Time)proxyTestRe
 	return result
 }
 var (
-	urlUserInfoPattern = regexp.MustCompile(`(?i)(https?://)[^/\\s@]+@`)
-	sensitiveQueryPattern = regexp.MustCompile(`(?i)([?&](?:password|passwd|token|api[_-]?key|secret)=)[^&#\\s"'<>]+`)
+	urlUserInfoPattern = regexp.MustCompile(`(?i)(https?://)[^/\s@]+@`)
+	sensitiveQueryPattern = regexp.MustCompile(`(?i)([?&](?:password|passwd|token|api[_-]?key|secret)=)[^&#\s"'<>]+`)
 )
 
 func safeError(err error) string {
