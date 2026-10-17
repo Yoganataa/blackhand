@@ -247,13 +247,17 @@ Free-tier fingerprint, implemented from the upstream pull requests that address 
 All of that is pinned by tests in `internal/provider/opencode/fingerprint_test.go` and
 `fingerprint_proxy_test.go`, which assert the exact path, headers and body this port puts on the wire.
 
-Live result, recorded honestly: after the change the upstream still answers
-`OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep
-building.` So the classification is not satisfied by the headers and body those two PRs describe — the
-gate evidently distinguishes the official client by something this port cannot reproduce from a
-request, or by a newer fingerprint than the pinned `2.0.29`. Until that is answered, free-tier
-inference through this port fails with the upstream's own message, and the model Test action surfaces
-it correctly instead of pretending to work. This is an open gap, not a solved one.
+Live result, recorded honestly: after the change the upstream still answers `403 FreeTierError` with
+"OpenCode's free tier can only be used from within OpenCode". That is not a header mismatch on this
+side. The request this port sends was captured against a local echo upstream — path
+`/inference/v1/chat/completions`, `User-Agent: opencode/latest/2.0.29/cli`, `x-opencode-client: cli`,
+`x-opencode-project: global`, the four aligned session headers, `Authorization: Bearer public`, the
+verbatim `read`/`shell` definitions and `stream: true` — and a hand-built `curl` request carrying those
+same bytes is refused in exactly the same way. An earlier session on this machine also logged the
+sibling free-tier reply "This model is not available in your country" for this provider, so the gate is
+upstream policy about the caller (region/identity), not something this port can satisfy by matching the
+fingerprint. Free-tier inference stays unusable from here, and the model Test action surfaces the
+upstream's own message instead of pretending otherwise. Open gap, evidence recorded.
 
 Still open in this area, absent rather than faked:
 
