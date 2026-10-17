@@ -1,0 +1,10 @@
+/bin/
+/data/
+/web/node_modules/
+/web/dist/
+/internal/httpapi/assets/*
+!/internal/httpapi/assets/.gitkeep
+.env
+*.db
+*.db-shm
+*.db-wal
