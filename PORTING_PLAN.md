@@ -55,7 +55,7 @@ The branch is a feature port, not a promise of 1:1 parity or production readines
 1. Run integration tests against a sanitized copy of a real 9Router database; verify backup and restore, legacy settings, keys, usage and proxy configuration.
 2. Capture fixtures from the pinned upstream revision for each RTK filter and compare results byte-for-byte where relevant.
 3. Add edge tests for streaming cancellation, upstream 4xx/5xx bodies, tool-call payload variants, API-key access-policy cases, relay failures, no-proxy and strict mode.
-4. Test `go test -race ./...`, concurrent SQLite writes, longer streams, high-cardinality usage data and memory use with large history.
+4. CI runs `go test -race ./...`; still add focused stress tests for concurrent SQLite writes, longer streams, high-cardinality usage data and memory use with large history.
 5. Add packaging for supported OS/architectures and verify clean-start and upgrade paths.
 6. Reconcile each persisted setting and API response with upstream source before removing any compatibility placeholder.
 
@@ -64,6 +64,7 @@ The branch is a feature port, not a promise of 1:1 parity or production readines
 CI currently checks:
 
 - `go test ./...`
+- `go test -race ./...`
 - `go vet ./...`
 - `npm run check`
 - `npm run build`
