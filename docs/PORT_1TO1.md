@@ -17,6 +17,14 @@ pinned upstream checkout, not when the file merely exists.
 Move the pin deliberately, one commit at a time, and record the new sha here when the port is
 re-verified against it. Do not track `master` implicitly.
 
+**One deliberate exception.** For the OpenCode provider's *upstream client behaviour* — the request
+headers, endpoints and session id format its gateway classifies on — the working reference is the
+`Yoganataa/9router` `dev` branch (v0.5.111, `db611289`), not official `master`. That branch carries the
+fixes this port needed (canonical inverted-timestamp session ids, the v2 client fingerprint, the
+inference lane for free models) as commits and as its registry transport headers, while official
+`master` and the open upstream pull requests (#4883, #4860) do not have them. Structural work — pages,
+routes, database shapes — still follows official `master`.
+
 ### Why not the fork (`Yoganataa/9router@dev`, v0.5.111)
 
 The two diverge: the fork is 45 commits ahead and 38 behind official `master`, 47 files differ.
@@ -247,17 +255,22 @@ Free-tier fingerprint, implemented from the upstream pull requests that address 
 All of that is pinned by tests in `internal/provider/opencode/fingerprint_test.go` and
 `fingerprint_proxy_test.go`, which assert the exact path, headers and body this port puts on the wire.
 
-Live result, recorded honestly: after the change the upstream still answers `403 FreeTierError` with
-"OpenCode's free tier can only be used from within OpenCode". That is not a header mismatch on this
-side. The request this port sends was captured against a local echo upstream — path
-`/inference/v1/chat/completions`, `User-Agent: opencode/latest/2.0.29/cli`, `x-opencode-client: cli`,
-`x-opencode-project: global`, the four aligned session headers, `Authorization: Bearer public`, the
-verbatim `read`/`shell` definitions and `stream: true` — and a hand-built `curl` request carrying those
-same bytes is refused in exactly the same way. An earlier session on this machine also logged the
-sibling free-tier reply "This model is not available in your country" for this provider, so the gate is
-upstream policy about the caller (region/identity), not something this port can satisfy by matching the
-fingerprint. Free-tier inference stays unusable from here, and the model Test action surfaces the
-upstream's own message instead of pretending otherwise. Open gap, evidence recorded.
+Live result after the first attempt, and the correction that followed: with those headers alone the upstream
+still answered `403 FreeTierError` ("OpenCode's free tier can only be used from within OpenCode"), even
+though a captured request showed the exact path, headers and body the PRs prescribe — a hand-built
+`curl` with the same bytes was refused identically. The missing piece was the **session id format**:
+the 12 hex characters are not free-form. Upstream decodes them as the low 48 bits of
+`~(timeMs*0x1000 + counter)` and refuses a counter outside a small range, so a random prefix is always
+rejected. The working implementation lives in `Yoganataa/9router` `dev` (v0.5.111) — commits
+"use canonical inverted-timestamp session IDs to prevent 403 FreeTierError", "restore valid bearer auth
+syntax in session patch" and "restore free-tier inference compatibility" — which is what this port now
+mirrors: `ses_` + inverted-timestamp prefix with a per-millisecond counter + 14 base62 characters.
+
+Verified live afterwards: the model Test action answers `{"ok":true}` for `oc/mimo-v2.6-flash-free` and
+`oc/deepseek-v4.1-flash-free`, and a real `POST /v1/chat/completions` streams the model's own output
+back through the router (`HTTP 200`, `mimo-v2.6-flash-free`, reasoning deltas `Ready.`). Free-tier
+inference works from this machine now; the earlier "not available in your country" reply seen in a
+previous session's OpenCode log did not reappear.
 
 Still open in this area, absent rather than faked:
 

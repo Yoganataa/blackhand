@@ -4,19 +4,20 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strconv"
 	"testing"
 )
 
 func TestIsFreeTierModel(t *testing.T) {
 	cases := map[string]bool{
-		"deepseek-v4.1-flash-free":          true,
-		"oc/mimo-v2.6-flash-free":           true,
-		"muse-spark-1.3-contributor-free":   true,
-		"big-pickle":                        false,
-		"claude-opus-5":                     false,
-		"deepseek-v4.1-flash":               false,
-		"wandb/deepseek-v2.5-free-preview":  false,
-		"":                                  false,
+		"deepseek-v4.1-flash-free":        true,
+		"oc/mimo-v2.6-flash-free":         true,
+		"muse-spark-1.3-contributor-free": true,
+		"big-pickle":                      false,
+		"claude-opus-5":                   false,
+		"deepseek-v4.1-flash":             false,
+		"wandb/deepseek-v2.5-free-preview": false,
+		"":                                false,
 	}
 	for model, want := range cases {
 		if got := isFreeTierModel(model); got != want {
@@ -34,7 +35,10 @@ func TestFreeTierUpstreamBase(t *testing.T) {
 	}
 }
 
-func TestNewSessionIDShape(t *testing.T) {
+// The upstream decodes the 12-hex prefix: it must be the low 48 bits of ~(timeMs*0x1000 + counter),
+// with a small counter. A random prefix is refused with 403 FreeTierError, which is the bug this test
+// pins against.
+func TestNewSessionIDUsesCanonicalInvertedTimestamp(t *testing.T) {
 	pattern := regexp.MustCompile(`^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$`)
 	seen := map[string]bool{}
 	for i := 0; i < 32; i++ {
@@ -46,12 +50,26 @@ func TestNewSessionIDShape(t *testing.T) {
 			t.Fatalf("session id %q repeated", id)
 		}
 		seen[id] = true
+
+		prefix, err := strconv.ParseUint(id[4:16], 16, 64)
+		if err != nil {
+			t.Fatalf("prefix of %q is not hex: %v", id, err)
+		}
+		decoded := (^prefix) & sessionPrefixMask
+		counter := decoded & 0xfff
+		if counter == 0 || counter > 64 {
+			t.Fatalf("counter %d for %q is outside the range the upstream tolerates", counter, id)
+		}
+		if decoded>>12 == 0 {
+			t.Fatalf("time field missing for %q", id)
+		}
 	}
 }
 
 func TestApplyFingerprintHeaders(t *testing.T) {
+	const session = "ses_abcdefabcdef0123456789abcd"
 	header := http.Header{}
-	applyFingerprintHeaders(header, "", "ses_abcdefabcdef0123456789abcd")
+	applyFingerprintHeaders(header, "", session, true)
 	if header.Get("User-Agent") != openCodeUserAgent {
 		t.Fatalf("User-Agent = %q", header.Get("User-Agent"))
 	}
@@ -61,14 +79,26 @@ func TestApplyFingerprintHeaders(t *testing.T) {
 	if header.Get("Authorization") != "Bearer public" {
 		t.Fatalf("Authorization = %q, want the free-tier public bearer", header.Get("Authorization"))
 	}
+	if header.Get("Accept") != "text/event-stream" {
+		t.Fatalf("Accept = %q for a streaming request", header.Get("Accept"))
+	}
 	for _, alias := range []string{"x-opencode-session", "x-opencode-session-id", "x-session-affinity", "x-session-id"} {
-		if header.Get(alias) != "ses_abcdefabcdef0123456789abcd" {
+		if header.Get(alias) != session {
 			t.Fatalf("%s = %q", alias, header.Get(alias))
 		}
 	}
+	// The v1 header is refused outright, so it must never be forwarded.
+	header.Set("x-opencode-request", "msg_deadbeefdeadbeefdeadbeef")
+	applyFingerprintHeaders(header, "", session, false)
+	if header.Get("x-opencode-request") != "" {
+		t.Fatalf("x-opencode-request survived: %q", header.Get("x-opencode-request"))
+	}
+	if header.Get("Accept") != "*/*" {
+		t.Fatalf("Accept = %q for a non-streaming request", header.Get("Accept"))
+	}
 
 	keyed := http.Header{}
-	applyFingerprintHeaders(keyed, "upstream-secret", "ses_abcdefabcdef0123456789abcd")
+	applyFingerprintHeaders(keyed, "upstream-secret", session, true)
 	if keyed.Get("Authorization") != "Bearer upstream-secret" {
 		t.Fatalf("configured upstream key ignored: %q", keyed.Get("Authorization"))
 	}
@@ -118,11 +148,10 @@ func TestApplyFingerprintTools(t *testing.T) {
 	existing := map[string]json.RawMessage{
 		"tools": json.RawMessage(`[{"type":"function","function":{"name":"read"}},{"type":"function","function":{"name":"shell"}}]`),
 	}
-	before := len(existing["tools"])
 	_ = applyFingerprintTools(existing)
 	var kept []map[string]any
 	_ = json.Unmarshal(existing["tools"], &kept)
-	if len(kept) != 2 || before == 0 {
+	if len(kept) != 2 {
 		t.Fatalf("existing tools duplicated: %v", kept)
 	}
 }

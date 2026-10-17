@@ -89,6 +89,10 @@ func(p *Provider)ProxyChatWithOptions(w http.ResponseWriter,r *http.Request,opti
 	if freeTier{baseURL=freeTierUpstreamBase(baseURL)}
 	target:=strings.TrimRight(baseURL,"/")+"/chat/completions"
 	sessionID:=newSessionID()
+	requestStreams:=freeTier
+	if !requestStreams&&payload!=nil{
+		if raw,ok:=payload["stream"];ok&&strings.Contains(string(raw),"true"){requestStreams=true}
+	}
 	targetURL,parseErr:=url.Parse(target)
 	if parseErr!=nil { http.Error(w,"invalid upstream URL",502); result.Error="invalid upstream URL"; return result }
 	relayURL:=strings.TrimSpace(options.RelayURL)
@@ -104,7 +108,7 @@ func(p *Provider)ProxyChatWithOptions(w http.ResponseWriter,r *http.Request,opti
 		if err!=nil{return nil,err}
 		req.ContentLength=int64(len(body))
 		for _,header:=range []string{"Content-Type","Accept"}{if value:=r.Header.Get(header);value!=""{req.Header.Set(header,value)}}
-		applyFingerprintHeaders(req.Header,p.cfg.UpstreamAPIKey,sessionID)
+		applyFingerprintHeaders(req.Header,p.cfg.UpstreamAPIKey,sessionID,requestStreams)
 		if relayURL!="" {
 			req.Header.Set("x-relay-target",targetURL.Scheme+"://"+targetURL.Host)
 			req.Header.Set("x-relay-path",targetURL.RequestURI())
@@ -139,7 +143,7 @@ func(p *Provider)ProxyChatWithOptions(w http.ResponseWriter,r *http.Request,opti
 			if buildErr==nil{
 				directReq.ContentLength=int64(len(body))
 				for _,header:=range []string{"Content-Type","Accept"}{if value:=r.Header.Get(header);value!=""{directReq.Header.Set(header,value)}}
-				applyFingerprintHeaders(directReq.Header,p.cfg.UpstreamAPIKey,sessionID)
+				applyFingerprintHeaders(directReq.Header,p.cfg.UpstreamAPIKey,sessionID,requestStreams)
 				resp,err=p.upstreamClient.Do(directReq)
 			}
 		}

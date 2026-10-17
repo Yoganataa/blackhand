@@ -2,26 +2,28 @@ package opencode
 
 // Free-tier client fingerprint for OpenCode's upstream gate.
 //
-// Ported from 9Router `open-sse/utils/opencodeFingerprint.js`, `open-sse/executors/opencode.js`
-// and PRs #4883 (`refresh the client fingerprint to the 2.0 channel form`) and #4860
-// (`align free-tier v2 headers`). Live probes there established that:
+// Ported from 9Router `open-sse/utils/opencodeFingerprint.js`, `open-sse/executors/opencode.js` and
+// the registry — specifically the working fixes carried by Yoganataa/9router `dev` (v0.5.111), which
+// upstream's own open pull requests (#4883, #4860) describe but do not yet have merged:
 //
-//   - the User-Agent must use the v2 channel form `opencode/<channel>/<version>/<client>`; the old
-//     `opencode/1.18.31` form is answered with 403 FreeTierError,
-//   - `x-opencode-client` must be `cli`, and free-tier requests authenticate as `Bearer public`,
-//   - free models are served on `https://opencode.ai/inference/v1/*` instead of `/zen/v1/*` and must
-//     be requested with `stream: true`,
-//   - the body must declare OpenCode's own `read` and `shell` tools with their exact descriptions and
-//     parameter schemas; renamed or reworded definitions are rejected.
-//
-// Everything else (session aliases, project header) follows the v2 header set.
+//   - the User-Agent must use the v2 channel form `opencode/<channel>/<version>/<client>`, and
+//     `x-opencode-client` must be `cli`,
+//   - free-tier requests authenticate as `Bearer public` and carry the v2 session set
+//     (`x-opencode-session`, `x-opencode-session-id`, `x-session-affinity`, `x-session-id`),
+//   - `x-opencode-request` is a v1 header and must not be sent,
+//   - the session id's 12-hex prefix is the low 48 bits of `~(timeMs*0x1000 + counter)`: the upstream
+//     decodes it and refuses a non-small counter with 403 FreeTierError, so a random prefix fails,
+//   - free models are served on `/inference/v1`, requested with `stream: true` and OpenCode's own
+//     `read` and `shell` tool definitions declared verbatim.
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
 
 const (
@@ -34,6 +36,8 @@ const (
 	openCodeInferenceBase = "/inference/v1"
 	sessionHeader         = "x-opencode-session"
 	base62Alphabet        = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	// 12 hex characters: the low 48 bits of the inverted time/counter value.
+	sessionPrefixMask = uint64(1)<<48 - 1
 )
 
 // isFreeTierModel mirrors 9Router `isOpencodeFreeTierModel`: the base model id ends in `-free`.
@@ -45,17 +49,35 @@ func isFreeTierModel(model string) bool {
 	return strings.HasSuffix(strings.ToLower(base), "-free")
 }
 
-// newSessionID builds an OpenCode session id: `ses_` + 12 hex + 14 base62 characters, the shape the
-// upstream session regex accepts.
+var (
+	sessionMu       sync.Mutex
+	sessionLastTime int64
+	sessionCounter  uint64
+)
+
+// newSessionID mirrors the fork's generateSessionId: `ses_` + 12 hex of `~(unixMillis*0x1000+counter)`
+// masked to 48 bits + 14 base62 random characters. The counter stays small within one millisecond,
+// which is what the upstream tolerates (0-16 pass, >=100 is refused).
 func newSessionID() string {
-	raw := make([]byte, 6+14)
-	if _, err := rand.Read(raw); err != nil {
-		return "ses_0000000000000000000000000"
+	sessionMu.Lock()
+	now := time.Now().UnixMilli()
+	if now != sessionLastTime {
+		sessionLastTime = now
+		sessionCounter = 0
+	}
+	sessionCounter++
+	counter := sessionCounter
+	sessionMu.Unlock()
+
+	prefix := (^(uint64(now)*0x1000 + counter)) & sessionPrefixMask
+	randomBytes := make([]byte, 14)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return fmt.Sprintf("ses_%012x%s", prefix, strings.Repeat("0", 14))
 	}
 	var builder strings.Builder
 	builder.WriteString("ses_")
-	builder.WriteString(hex.EncodeToString(raw[:6]))
-	for _, value := range raw[6:] {
+	builder.WriteString(fmt.Sprintf("%012x", prefix))
+	for _, value := range randomBytes {
 		builder.WriteByte(base62Alphabet[int(value)%len(base62Alphabet)])
 	}
 	return builder.String()
@@ -63,15 +85,22 @@ func newSessionID() string {
 
 // applyFingerprintHeaders sets the header set OpenCode's gate classifies on. A configured upstream key
 // wins; otherwise the free tier authenticates as `Bearer public`.
-func applyFingerprintHeaders(header http.Header, upstreamAPIKey string, sessionID string) {
+func applyFingerprintHeaders(header http.Header, upstreamAPIKey string, sessionID string, streaming bool) {
 	header.Set("User-Agent", openCodeUserAgent)
 	header.Set("x-opencode-client", openCodeClient)
 	header.Set("x-opencode-project", openCodeProject)
 	header.Set(sessionHeader, sessionID)
-	// v2 alias set, mirroring PR #4860.
+	// v2 alias set, mirroring the fork and PR #4860.
 	header.Set("x-opencode-session-id", sessionID)
 	header.Set("x-session-affinity", sessionID)
 	header.Set("x-session-id", sessionID)
+	// The v1 header is refused outright; never send it.
+	header.Del("x-opencode-request")
+	if streaming {
+		header.Set("Accept", "text/event-stream")
+	} else {
+		header.Set("Accept", "*/*")
+	}
 
 	if strings.TrimSpace(upstreamAPIKey) != "" {
 		header.Set("Authorization", "Bearer "+upstreamAPIKey)
