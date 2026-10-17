@@ -7,18 +7,17 @@
   type Stats = { totalRequests?: number; totalPromptTokens?: number; totalCompletionTokens?: number; totalCachedTokens?: number; totalCost?: number; byProvider?: Record<string, any>; recentRequests?: any[]; activeRequests?: any[]; last10Minutes?: any[] };
   type ChartPoint = { label: string; tokens: number; cost: number; requests: number };
 
-  const sections: { name: Section; icon: string; description: string }[] = [
-    { name: "Overview", icon: "◫", description: "Runtime status and quick checks" },
-    { name: "Endpoint & Key", icon: "⌘", description: "Endpoint API and access keys" },
-    { name: "Providers", icon: "◇", description: "OpenCode Free model discovery" },
-    { name: "Usage", icon: "▥", description: "Request and token accounting" },
-    { name: "Token Saver", icon: "⌁", description: "Compression pipeline and controls" },
-    { name: "Console Log", icon: "≋", description: "Runtime events and diagnostics" },
-    { name: "Settings", icon: "⚙", description: "Runtime configuration" },
-    { name: "Proxypools", icon: "⇄", description: "Outbound proxy pools" }
+  const sections: { name: Section; label?: string; icon: string; description: string; group?: "system" }[] = [
+    { name: "Endpoint & Key", label: "Endpoint & Key", icon: "api", description: "API endpoint configuration and access keys" },
+    { name: "Providers", label: "Providers", icon: "dns", description: "Manage configured AI provider connections" },
+    { name: "Usage", label: "Usage", icon: "bar_chart", description: "Monitor requests, token consumption and history" },
+    { name: "Token Saver", label: "Token Saver", icon: "savings", description: "Compress tool output and reduce prompt tokens" },
+    { name: "Proxypools", label: "Proxy Pools", icon: "lan", description: "Manage outbound proxy pool configurations", group: "system" },
+    { name: "Console Log", label: "Console Log", icon: "terminal", description: "Live server console output", group: "system" },
+    { name: "Settings", label: "Settings", icon: "settings", description: "Manage access, runtime and network preferences", group: "system" }
   ];
 
-  let active: Section = "Overview";
+  let active: Section = "Endpoint & Key";
   let health: "checking" | "online" | "offline" = "checking";
   let authenticated = false;
   let loginRequired = true;
@@ -28,6 +27,8 @@
   let actionError = "";
   let successMessage = "";
   let busy = false;
+  let darkTheme = false;
+  let visibleKeys = new Set<string>();
   let endpoint = window.location.origin + "/v1";
   let probeKey = "";
   let models: any[] = [];
@@ -119,7 +120,7 @@
     actionError = "";
     try {
       if (section === "Overview") { await checkHealth(); const result = await request("/api/usage/stats?period=7d"); stats = result; }
-      if (section === "Endpoint & Key") await loadKeys();
+      if (section === "Endpoint & Key") { await Promise.all([loadKeys(), loadSettings()]); }
       if (section === "Providers") await loadModels();
       if (section === "Usage") await loadUsage();
       if (section === "Token Saver" || section === "Settings") await loadSettings();
@@ -184,6 +185,22 @@
   async function copy(text: string) {
     try { await navigator.clipboard.writeText(text); successMessage = "Copied to clipboard"; }
     catch { actionError = "Clipboard access was denied by the browser"; }
+  }
+  function maskKey(value: string) {
+    if (!value) return "";
+    if (value.length <= 10) return "•".repeat(value.length);
+    return value.slice(0, 6) + "•".repeat(Math.min(16, value.length - 10)) + value.slice(-4);
+  }
+  function toggleKeyVisibility(id: string) {
+    const next = new Set(visibleKeys);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    visibleKeys = next;
+  }
+  function toggleTheme() {
+    darkTheme = !darkTheme;
+    document.documentElement.classList.toggle("dark", darkTheme);
+    try { localStorage.setItem("blackhand-theme", darkTheme ? "dark" : "light"); } catch { /* storage is optional */ }
   }
   async function loadModels() {
     modelProbeMessage = "Checking OpenCode model catalogue…";
@@ -291,6 +308,10 @@
   }
 
   onMount(() => {
+    try {
+      darkTheme = localStorage.getItem("blackhand-theme") === "dark";
+      document.documentElement.classList.toggle("dark", darkTheme);
+    } catch { /* use the light theme when storage is unavailable */ }
     void (async () => {
       await checkHealth();
       await checkSession();
@@ -299,35 +320,45 @@
   });
 </script>
 
-<svelte:head><title>{active} · Blackhand</title></svelte:head>
+<svelte:head><title>{active === "Endpoint & Key" ? "Endpoint" : active === "Proxypools" ? "Proxy Pools" : active} · 9Router</title></svelte:head>
 
 <div class="shell">
   <aside class="sidebar">
-    <a class="brand" href="#overview" onclick={() => go("Overview")}>
-      <span class="brand-mark">B</span>
-      <span><strong>blackhand</strong><small>GO ROUTER</small></span>
+    <div class="window-controls" aria-label="Window controls">
+      <span class="traffic-light red"></span><span class="traffic-light amber"></span><span class="traffic-light green"></span>
+    </div>
+    <a class="brand" href="#endpoint" onclick={() => go("Endpoint & Key")}>
+      <span class="brand-mark"><span class="material-symbols-outlined">hub</span></span>
+      <span><strong>9Router</strong><small>BLACKHAND · GO BUILD</small></span>
     </a>
     <div class="nav-label">WORKSPACE</div>
-    <nav>
-      {#each sections as section}
+    <nav class="primary-nav">
+      {#each sections.filter(section => section.group !== "system") as section}
         <button class:active={active === section.name} class="nav-item" onclick={() => go(section.name)}>
-          <span class="nav-icon">{section.icon}</span><span>{section.name}</span>
-          {#if section.name === "Providers"}<span class="nav-count">oc/</span>{/if}
+          <span class="nav-icon material-symbols-outlined">{section.icon}</span><span>{section.label || section.name}</span>
+          {#if section.name === "Providers"}<span class="nav-count">1</span>{/if}
+        </button>
+      {/each}
+      <div class="nav-group-label">SYSTEM</div>
+      {#each sections.filter(section => section.group === "system") as section}
+        <button class:active={active === section.name} class="nav-item" onclick={() => go(section.name)}>
+          <span class="nav-icon material-symbols-outlined">{section.icon}</span><span>{section.label || section.name}</span>
         </button>
       {/each}
     </nav>
     <div class="sidebar-bottom">
-      <div class="status-line"><span class:online={health === "online"} class:offline={health === "offline"} class="status-dot"></span>{health === "online" ? "Runtime ready" : health === "offline" ? "Runtime unavailable" : "Checking runtime"}</div>
-      <small>Single-binary architecture</small>
+      <div class="status-line"><span class:online={health === "online"} class:offline={health === "offline"} class="status-dot"></span><span>{health === "online" ? "Runtime ready" : health === "offline" ? "Runtime unavailable" : "Checking runtime"}</span></div>
+      <small>Single-binary Go runtime</small>
     </div>
   </aside>
 
   <main class="main">
     <header class="topbar">
-      <div class="breadcrumbs"><span>Workspace</span><span class="slash">/</span><strong>{active}</strong></div>
+      <div class="breadcrumbs"><span>9Router</span><span class="slash">/</span><strong>{active === "Endpoint & Key" ? "Endpoint" : active === "Proxypools" ? "Proxy Pools" : active}</strong></div>
       <div class="top-actions">
-        <span class="version-chip">GO · SPA</span>
-        <button class="icon-button" aria-label="Refresh section" onclick={() => refreshSection(active)}>↻</button>
+        <span class="version-chip">GO BUILD</span>
+        <button class="icon-button" aria-label="Toggle theme" title={darkTheme ? "Switch to light theme" : "Switch to dark theme"} onclick={toggleTheme}><span class="material-symbols-outlined">{darkTheme ? "light_mode" : "dark_mode"}</span></button>
+        <button class="icon-button" aria-label="Refresh section" title="Refresh section" onclick={() => refreshSection(active)}><span class="material-symbols-outlined">refresh</span></button>
         {#if authenticated}<button class="button subtle" onclick={logout}>Sign out</button>{/if}
         <span class="avatar">BH</span>
       </div>
@@ -335,8 +366,8 @@
 
     <section class="content">
       <div class="page-head">
-        <div><div class="eyebrow">BLACKHAND / ROUTER</div><h1>{active}</h1><p>{sections.find(s => s.name === active)?.description}</p></div>
-        <button class="button subtle" onclick={() => refreshSection(active)}>↻ Refresh</button>
+        <div><div class="eyebrow">9ROUTER / BLACKHAND PORT</div><h1>{active === "Endpoint & Key" ? "Endpoint" : active === "Proxypools" ? "Proxy Pools" : active}</h1><p>{sections.find(s => s.name === active)?.description}</p></div>
+        <button class="button subtle" onclick={() => refreshSection(active)}><span class="material-symbols-outlined">refresh</span> Refresh</button>
       </div>
 
       {#if actionError}<div class="message error">{actionError}</div>{/if}
@@ -359,7 +390,11 @@
       {:else if active === "Endpoint & Key"}
         <div class="panel endpoint-panel">
           <div class="panel-heading"><div><div class="eyebrow">API CONNECTION</div><h2>Endpoint</h2></div><span class="pill">/v1</span></div>
-          <div class="endpoint-row"><code>{endpoint}</code><button class="button primary" onclick={() => copy(endpoint)}>Copy</button></div>
+          <div class="endpoint-row"><span class="endpoint-kind">Local</span><code>{endpoint}</code><button class="button primary" onclick={() => copy(endpoint)}>Copy endpoint</button></div>
+          <div class="security-card" class:security-off={settings.requireApiKey === false}>
+            <div class="security-copy"><strong>{settings.requireApiKey === false ? "API key protection is disabled" : "API key protection is enabled"}</strong><p>{settings.requireApiKey === false ? "Requests to the inference endpoint may be accepted without a client key. Enable protection before exposing this endpoint to a network." : "Inference requests must include an active client API key."}</p></div>
+            <label class="setting-row compact-setting"><span><strong>Require API key</strong><small>Protect /v1 endpoints with a managed key.</small></span><input type="checkbox" checked={settings.requireApiKey !== false} onchange={(e) => saveSetting("requireApiKey", (e.currentTarget as HTMLInputElement).checked)} /></label>
+          </div>
           <h2>API keys</h2>
           <form class="inline-form" onsubmit={createKey}>
             <input bind:value={keyName} placeholder="Key name, e.g. OpenCode laptop" required />
@@ -371,8 +406,9 @@
           <div class="key-list">
             {#each keys as key (key.id)}
               <div class="key-row">
-                <div class="key-info"><strong>{key.name || "Unnamed key"}</strong><small><code>{key.key}</code></small><small>Created {key.createdAt || "date unavailable"} · {key.access?.restricted ? "Restricted to " + (key.access.allow || []).join(", ") : "Unrestricted access"}</small></div>
+                <div class="key-info"><strong>{key.name || "Unnamed key"}</strong><small><code>{visibleKeys.has(key.id) ? key.key : maskKey(key.key)}</code></small><small>Created {key.createdAt || "date unavailable"} · {key.access?.restricted ? "Restricted to " + (key.access.allow || []).join(", ") : "Unrestricted access"}</small></div>
                 <span class:good={key.isActive} class="pill">{key.isActive ? "ACTIVE" : "DISABLED"}</span>
+                <button class="button subtle" onclick={() => toggleKeyVisibility(key.id)}>{visibleKeys.has(key.id) ? "Hide" : "Reveal"}</button>
                 <button class="button subtle" onclick={() => copy(key.key)}>Copy</button>
                 <button class="button subtle" onclick={() => editKeyAccess(key)}>{editingAccessKeyId === key.id ? "Close access" : "Access"}</button>
                 <button class="button subtle" onclick={() => toggleKey(key)}>{key.isActive ? "Disable" : "Enable"}</button>
@@ -496,14 +532,14 @@
 {#if loginRequired && !authenticated}
   <div class="login-overlay">
     <form class="login-card" onsubmit={login}>
-      <div class="brand-mark login-mark">B</div>
-      <div class="eyebrow">BLACKHAND / SECURE ACCESS</div>
+      <div class="brand-mark login-mark"><span class="material-symbols-outlined">hub</span></div>
+      <div class="eyebrow">9ROUTER / SECURE ACCESS</div>
       <h1>Sign in</h1>
-      <p>Authenticate to manage API keys, runtime settings, usage and proxy pools.</p>
+      <p>Sign in to manage your endpoint, providers, API keys, usage and router settings.</p>
       {#if authError}<div class="message error">{authError}</div>{/if}
       <label class="field"><span>Dashboard password</span><input type="password" bind:value={password} autocomplete="current-password" required /></label>
       <button class="button primary login-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
-      <small>Fresh local installs use INITIAL_PASSWORD or the default password. Remote access must not use the default password.</small>
+      <small>Keep the dashboard bound to localhost unless remote access is protected by a custom password and trusted TLS termination.</small>
     </form>
   </div>
 {/if}
