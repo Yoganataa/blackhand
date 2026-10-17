@@ -206,12 +206,26 @@ checkout, and the registry subset in `web/src/lib/providers.ts` (id, name, colou
   the blocked set (host, content-length, content-type, connection, transfer-encoding, authorization,
   cookie), with table tests in `provider_overrides_test.go`. Verified through the browser: saving an
   override persists it, and Reset + Save clears it again.
+- **Available Models** — the catalogue read behind the dashboard session (`GET /api/models`, because the
+  public `/v1/models` needs a client API key), one tile per model with copy and a disable action that
+  moves the model to a dashed restore chip, plus "Disable All" with upstream's confirm text. Disabled
+  state is kept per provider alias through `GET/POST/DELETE /api/models/disabled`, stored in the `kv`
+  table (`internal/storage/disabled_models.go`, table tests in `disabled_models_test.go`). Verified
+  through the browser: disabling `big-pickle` persisted `{"ids":["big-pickle"]}` and restoring it
+  cleared the set again.
+
+Two deviations inside the models card, recorded rather than hidden: the FREE badge, per-model
+capability badges and thinking suffix are absent because the catalogue this port fetches carries no
+`isFree`, caps or thinking metadata; and `/api/models` does not filter the disabled set out of its
+response, because the card needs the full list to offer restoring a model, where upstream's route
+filters it for its other consumers.
 
 Still open in this area, absent rather than faked:
 
-- **Models card** — available models with enable/disable, "Disable All", thinking selector,
-  suggested free models and "Add Model": needs `/api/models/disabled`, `/api/models/alias`,
-  `/api/models/custom`, `/api/models/test`.
+- **Model extras** — thinking selector (`settings.providerThinking` plus
+  `open-sse/providers/thinkingLevels.js`), "Suggested free models", "Add Model" with custom models and
+  aliases (`/api/models/custom`, `/api/models/alias`), and the per-model Test action
+  (`/api/models/test`).
 - **Connections** — list, add, edit, delete, bulk import, per-connection proxy pool binding and
   cooldown display (`/api/providers` POST/PUT/DELETE already have an upstream contract to match).
 - **Batch actions** — "Test All" and `/api/providers/test-batch`.

@@ -6,6 +6,7 @@ export type ProviderInfo = {
   name: string;
   color: string;
   textIcon: string;
+  alias: string;
   noAuth?: boolean;
   category: "freeTier";
 };
@@ -16,6 +17,7 @@ export const PROVIDERS: Record<string, ProviderInfo> = {
     name: "OpenCode Free",
     color: "#E87040",
     textIcon: "OC",
+    alias: "oc",
     noAuth: true,
     category: "freeTier",
   },

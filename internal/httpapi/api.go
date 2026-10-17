@@ -67,6 +67,11 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("GET /api/providers/{id}/overrides",a.dashboardAuth(http.HandlerFunc(a.providerOverridesGet)))
 	mux.Handle("PUT /api/providers/{id}/overrides",a.dashboardAuth(http.HandlerFunc(a.providerOverridesPut)))
 
+	mux.Handle("GET /api/models/disabled",a.dashboardAuth(http.HandlerFunc(a.modelsDisabledGet)))
+	mux.Handle("POST /api/models/disabled",a.dashboardAuth(http.HandlerFunc(a.modelsDisabledCreate)))
+	mux.Handle("DELETE /api/models/disabled",a.dashboardAuth(http.HandlerFunc(a.modelsDisabledDelete)))
+	mux.Handle("GET /api/models",a.dashboardAuth(http.HandlerFunc(a.modelsCatalogue)))
+
 	mux.Handle("GET /api/proxy-pools",a.dashboardAuth(http.HandlerFunc(a.proxyPoolsList)))
 	mux.Handle("POST /api/proxy-pools",a.dashboardAuth(http.HandlerFunc(a.proxyPoolCreate)))
 	mux.Handle("GET /api/proxy-pools/{id}",a.dashboardAuth(http.HandlerFunc(a.proxyPoolGet)))
