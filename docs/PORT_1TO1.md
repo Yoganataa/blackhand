@@ -81,7 +81,7 @@ Each phase ends with: `go test -race ./...`, `go vet ./...`, `npm run check`, `n
 |---|---|---|
 | 0 | Reference checkout, surface inventory, pin recorded, 1:1 checklist | done — checkout at `87a74e1` (v0.5.104) |
 | 1 | FE foundation: Tailwind v4 + upstream theme tokens, shell (`Sidebar`/`Header`/`DashboardLayout`) in Svelte, `/dashboard/*` routing, only in-scope nav | foundation built and checked; shell not yet wired into `App.svelte` |
-| 2 | Setting (`/dashboard/profile`) + Endpoint & Key (incl. tunnel/Tailscale) | Endpoint & Key page ported (keys, access controls, require-API-key, security gate); tunnel/Tailscale rows and the shared model picker still open. Setting not started. |
+| 2 | Setting (`/dashboard/profile`) + Endpoint & Key (incl. tunnel/Tailscale) | Endpoint & Key page ported; Setting ported for Local Mode + Security only. Open: tunnel/Tailscale rows, the shared model picker, and the rest of the profile cards. |
 | 3 | Providers — OpenCode Free: list + detail, connections, model enable/disable/alias/custom, proxy pool binding, custom headers | not started |
 | 4 | Usage + pricing settings page (per-connection limits, topology, request details) | not started |
 | 5 | Token Saver (RTK filter parity re-fixtured from official, Headroom/PXPIPE lifecycle) | not started |
@@ -149,6 +149,32 @@ Still open in this area, so they are absent rather than faked:
 - `KeyAccessControls`' picker: upstream opens the shared `ModelSelectModal` fed by `/api/providers`
   and `/api/models/alias` (Providers area). Until those exist, the page opens a models-only picker
   fed by `/v1/models`; this is a deliberate interim, recorded here.
+
+## Setting (profile) — phase 2, in progress
+
+Ported from the official checkout into `web/src/pages/profile/ProfilePage.svelte`. Cards in place,
+matching upstream markup and labels:
+
+- **Local Mode** — theme segmented control (light / dark / system) driving the shell theme store, and
+  the Database Location row. Upstream prints a fixed path; Blackhand prints the real one from
+  `DATA_DIR`, which `GET /api/settings` now returns as `databasePath` (a small port adaptation).
+- **Security** — "Require login" toggle (`PATCH /api/settings`), and the password form (current /
+  new / confirm, with the current field shown only when a password is stored). Confirmation and
+  error states driven by the server response.
+
+Still open in this area, absent rather than faked:
+
+- **Download Backup / Import Backup** — upstream exchanges a JSON payload through
+  `/api/settings/database` (with a password re-auth header). Blackhand has no equivalent export
+  format yet; a raw SQLite copy would not be compatible with upstream's import, so nothing is shown.
+- **Language** — upstream opens `LanguageSwitcher` over the runtime i18n catalogue; Blackhand has no
+  i18n layer yet.
+- **Single Sign-On (SSO)** — OIDC and SAML configuration forms plus their test endpoints. The Go side
+  stores the settings and auth already refuses to use unimplemented SSO flows.
+- **Routing Strategy** (round robin, sticky limits) — belongs with provider selection.
+- **Network** — outbound proxy fields exist in the Go settings; the upstream card and
+  `/api/settings/proxy-test` are not ported.
+- **Observability** and the shutdown action (`/api/version/shutdown`).
 
 ## Rules
 

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import DashboardLayout from "./shell/DashboardLayout.svelte";
   import EndpointPage from "./pages/endpoint/EndpointPage.svelte";
+  import ProfilePage from "./pages/profile/ProfilePage.svelte";
   import { navigate, route } from "./lib/router.svelte";
 
   type Section = "Endpoint & Key" | "Providers" | "Usage" | "Token Saver" | "Console Log" | "Settings" | "Proxypools";
@@ -44,8 +45,6 @@
   let models = $state<any[]>([]);
   let modelProbeMessage = $state("");
   let settings = $state<Record<string, any>>({});
-  let currentPassword = $state("");
-  let newPassword = $state("");
   let stats = $state<Stats>({});
   let chart = $state<ChartPoint[]>([]);
   let period = $state("7d");
@@ -110,11 +109,10 @@
   async function refreshSection(section: Section) {
     actionError = "";
     try {
-      // Endpoint & Key owns its data: it loads keys and settings itself.
+      // Endpoint & Key and Setting own their data: those pages load what they need themselves.
       if (section === "Providers") await loadModels();
       if (section === "Usage") await loadUsage();
-      if (section === "Token Saver" || section === "Settings") await loadSettings();
-      if (section === "Settings") await loadPools();
+      if (section === "Token Saver") await loadSettings();
       if (section === "Console Log") await openConsoleStream();
       if (section === "Proxypools") await loadPools();
     } catch (error) { actionError = error instanceof Error ? error.message : "Could not load this section"; }
@@ -149,22 +147,6 @@
       settings = { ...settings, [key]: oldValue };
       actionError = error instanceof Error ? error.message : "Could not save setting";
     }
-  }
-  async function savePassword(event: SubmitEvent) {
-    event.preventDefault();
-    actionError = "";
-    successMessage = "";
-    if (newPassword.length < 8) { actionError = "Use at least 8 characters for the new password."; return; }
-    try {
-      const body: Record<string, string> = { newPassword };
-      if (currentPassword) body.currentPassword = currentPassword;
-      const result = await request("/api/settings", { method: "PATCH", body: JSON.stringify(body) });
-      settings = { ...settings, ...result };
-      hasPassword = true;
-      currentPassword = "";
-      newPassword = "";
-      successMessage = "Dashboard password updated";
-    } catch (error) { actionError = error instanceof Error ? error.message : "Could not change password"; }
   }
   async function loadUsage() {
     const values = await Promise.all([
@@ -308,33 +290,7 @@
       <div class="console-output">{#each logs as line, i}<div class="console-line"><span>{String(i+1).padStart(3,"0")}</span><code>{line}</code></div>{/each}{#if logs.length===0}<div class="muted">No log lines yet. API requests will appear here.</div>{/if}</div>
     </div>
   {:else if active === "Settings"}
-    <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">ACCESS CONTROL</div><h2>Router settings</h2></div><span class="pill">SAVED</span></div>
-      <div class="setting-list">
-        <label class="setting-row"><span><strong>Require dashboard login</strong><small>Protect management APIs and settings with a dashboard session.</small></span><input type="checkbox" checked={settings.requireLogin !== false} onchange={(e) => saveSetting("requireLogin", (e.currentTarget as HTMLInputElement).checked)} /></label>
-        <label class="setting-row"><span><strong>Require API key</strong><small>Require a valid active key for /v1 inference endpoints.</small></span><input type="checkbox" checked={settings.requireApiKey !== false} onchange={(e) => saveSetting("requireApiKey", (e.currentTarget as HTMLInputElement).checked)} /></label>
-        <label class="setting-row"><span><strong>Outbound proxy</strong><small>Apply configured HTTP(S) proxy to OpenCode Free requests.</small></span><input type="checkbox" checked={Boolean(settings.outboundProxyEnabled)} onchange={(e) => saveSetting("outboundProxyEnabled", (e.currentTarget as HTMLInputElement).checked)} /></label>
-      </div>
-      <div class="field-grid">
-        <label class="field"><span>Outbound proxy pool</span>
-          <select bind:value={settings.outboundProxyPoolId} onchange={() => saveSetting("outboundProxyPoolId", settings.outboundProxyPoolId || "")}>
-            <option value="">Use direct or proxy URL below</option>
-            {#each pools as pool (pool.id)}<option value={pool.id}>{pool.name} · {pool.type}{pool.isActive ? "" : " (inactive)"}</option>{/each}
-          </select>
-        </label>
-        <label class="field"><span>Outbound proxy URL (legacy)</span><input bind:value={settings.outboundProxyUrl} placeholder="http://127.0.0.1:8080" /></label>
-        <label class="field"><span>No-proxy list (legacy)</span><input bind:value={settings.outboundNoProxy} placeholder="localhost,127.0.0.1" /></label>
-      </div>
-      <button class="button primary" onclick={async () => { await saveSetting("outboundProxyUrl", settings.outboundProxyUrl || ""); await saveSetting("outboundNoProxy", settings.outboundNoProxy || ""); await saveSetting("outboundProxyPoolId", settings.outboundProxyPoolId || ""); }}>Save network settings</button>
-      <p class="muted">When outbound proxy is enabled, the selected pool takes precedence over the legacy proxy URL. A strict pool never falls back directly when the proxy is unavailable.</p>
-    </div>
-    <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">DASHBOARD SECURITY</div><h2>{hasPassword ? "Change password" : "Set a password"}</h2></div></div>
-      <form class="password-form" onsubmit={savePassword}>
-        {#if hasPassword}<label class="field"><span>Current password</span><input type="password" bind:value={currentPassword} autocomplete="current-password" required /></label>{/if}
-        <label class="field"><span>New password (minimum 8 characters)</span><input type="password" bind:value={newPassword} autocomplete="new-password" minlength="8" required /></label>
-        <button class="button primary" type="submit">Update password</button>
-      </form>
-      <p class="muted">This port currently supports password login only. OIDC/SAML settings are preserved, but no SSO flow is connected yet.</p>
-    </div>
+    <ProfilePage />
   {:else if active === "Proxypools"}
     <div class="panel endpoint-panel"><div class="panel-heading"><div><div class="eyebrow">EGRESS</div><h2>Proxy pools</h2></div><span class="pill">{pools.length} pools</span></div>
       <form class="pool-form" onsubmit={createPool}>

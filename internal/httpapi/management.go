@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -65,6 +66,7 @@ func (a *API) settingsGet(w http.ResponseWriter,r *http.Request){
 	settings["enableRequestLogs"]=strings.EqualFold(strings.TrimSpace(getEnv("ENABLE_REQUEST_LOGS")),"true")
 	settings["enableTranslator"]=strings.EqualFold(strings.TrimSpace(getEnv("ENABLE_TRANSLATOR")),"true")
 	settings["hasPassword"]=hasPassword
+	settings["databasePath"]=filepath.Join(a.cfg.DataDir,"db","data.sqlite")
 	writeJSON(w,200,settings)
 }
 func (a *API) settingsPatch(w http.ResponseWriter,r *http.Request){
@@ -94,6 +96,7 @@ func (a *API) settingsPatch(w http.ResponseWriter,r *http.Request){
 	_,hasPassword:=settings["password"];secret,_:=settings["oidcClientSecret"].(string);delete(settings,"password");delete(settings,"oidcClientSecret")
 	settings["oidcConfigured"]=settings["oidcIssuerUrl"]!=""&&settings["oidcClientId"]!=""&&secret!=""
 	settings["enableRequestLogs"]=strings.EqualFold(getEnv("ENABLE_REQUEST_LOGS"),"true");settings["enableTranslator"]=strings.EqualFold(getEnv("ENABLE_TRANSLATOR"),"true");settings["hasPassword"]=hasPassword
+	settings["databasePath"]=filepath.Join(a.cfg.DataDir,"db","data.sqlite")
 	writeJSON(w,200,settings)
 }
 func getEnv(k string) string { return strings.TrimSpace(os.Getenv(k)) }
