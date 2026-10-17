@@ -81,7 +81,7 @@ Each phase ends with: `go test -race ./...`, `go vet ./...`, `npm run check`, `n
 |---|---|---|
 | 0 | Reference checkout, surface inventory, pin recorded, 1:1 checklist | done — checkout at `87a74e1` (v0.5.104) |
 | 1 | FE foundation: Tailwind v4 + upstream theme tokens, shell (`Sidebar`/`Header`/`DashboardLayout`) in Svelte, `/dashboard/*` routing, only in-scope nav | foundation built and checked; shell not yet wired into `App.svelte` |
-| 2 | Setting (`/dashboard/profile`) + Endpoint & Key (incl. tunnel/Tailscale) | not started |
+| 2 | Setting (`/dashboard/profile`) + Endpoint & Key (incl. tunnel/Tailscale) | Endpoint & Key page ported (keys, access controls, require-API-key, security gate); tunnel/Tailscale rows and the shared model picker still open. Setting not started. |
 | 3 | Providers — OpenCode Free: list + detail, connections, model enable/disable/alias/custom, proxy pool binding, custom headers | not started |
 | 4 | Usage + pricing settings page (per-connection limits, topology, request details) | not started |
 | 5 | Token Saver (RTK filter parity re-fixtured from official, Headroom/PXPIPE lifecycle) | not started |
@@ -129,6 +129,26 @@ Wiring notes from the first shell integration (`web/src/App.svelte`):
   because the login page sits outside the seven in-scope areas; revisit when the auth surface is ported.
 - The area bodies are still the previous implementations (legacy CSS classes) rendered inside the new
   shell, so their look is interim until each area is replaced by its 1:1 port.
+
+## Endpoint & Key (phase 2, in progress)
+
+Ported from the official checkout under `web/src/pages/endpoint/` and the shared primitives under
+`web/src/ui/` (Button, Card, CardSection, CardRow, CardListItem, Input, Toggle, Modal, ConfirmModal,
+Tooltip — all copied from `src/shared/components/` at the pin). Verified with `npm run check`
+(0 errors, 0 warnings), `npm run build`, and the full `scripts/test-windows.ps1` run; the rendered
+page was checked in a browser against the upstream structure.
+
+Behaviour carried over: local endpoint row with copy feedback, `requireApiKey` toggle, API-key list
+with masked/reveal/copy, create/delete/pause-confirm flows, per-key access restriction with an allow
+list, and auto-provisioning of a "Default Key" for first-time users.
+
+Still open in this area, so they are absent rather than faked:
+
+- the Tunnel (Cloudflare) and Tailscale rows on the same upstream card, with their modals, ping
+  loops and `/api/tunnel/*` routes, plus the "Allow dashboard access via tunnel" toggle
+- `KeyAccessControls`' picker: upstream opens the shared `ModelSelectModal` fed by `/api/providers`
+  and `/api/models/alias` (Providers area). Until those exist, the page opens a models-only picker
+  fed by `/v1/models`; this is a deliberate interim, recorded here.
 
 ## Rules
 
