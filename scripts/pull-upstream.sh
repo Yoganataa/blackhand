@@ -23,7 +23,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 UPSTREAM="${UPSTREAM:-upstream}"
-BRANCH="${BRANCH:-blackhand}"
+BRANCH="${BRANCH:-main}"
 RUN_TESTS=1
 
 for arg in "$@"; do

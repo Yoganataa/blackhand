@@ -54,3 +54,6 @@ stitch-screenshots/
 # Python bytecode from the Colab bootstrap
 __pycache__/
 *.pyc
+
+# OpenChamber's per-project workspace
+/.openchamber/

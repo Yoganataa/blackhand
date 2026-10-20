@@ -8,7 +8,7 @@ means replaying ours on top of a newer upstream — never merging two histories.
 scripts/pull-upstream.sh
 ```
 
-The script fetches `upstream`, rebases `blackhand` onto `upstream/main`, and
+The script fetches `upstream`, rebases `main` onto `upstream/main`, and
 then builds and tests. If a conflict appears it stops and tells you what to do.
 
 ## Why the rebase stays small
