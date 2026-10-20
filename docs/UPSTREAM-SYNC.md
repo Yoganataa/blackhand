@@ -106,7 +106,7 @@ os.environ["CF_TUNNEL_CREDENTIALS_FILE"] = "/content/credentials.json"
 ```
 
 ```bash
-!git clone https://github.com/Yoganataa/9router-go.git
+!git clone https://github.com/Yoganataa/blackhand.git
 %cd 9router-go
 !python3 scripts/colab-bootstrap.py
 ```

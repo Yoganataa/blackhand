@@ -21,7 +21,7 @@ the fallback for a fork that has not cut a release yet.
 
 Usage in a Colab notebook cell:
 
-    !git clone https://github.com/Yoganataa/9router-go.git
+    !git clone https://github.com/Yoganataa/blackhand.git
     %cd 9router-go
     !python3 scripts/colab-bootstrap.py
 
@@ -62,7 +62,7 @@ LOG_DIR = Path(DATA_DIR)
 # a release yet has no asset to download.
 DEFAULT_BINARY_URL = os.environ.get(
     "BLACKHAND_BINARY_URL",
-    "https://github.com/Yoganataa/9router-go/releases/latest/download/blackhand-linux-amd64",
+    "https://github.com/Yoganataa/blackhand/releases/latest/download/blackhand-linux-amd64",
 )
 GO_VERSION = os.environ.get("BLACKHAND_GO_VERSION", "1.27.0")
 BUN_VERSION = os.environ.get("BLACKHAND_BUN_VERSION", "1.4.2")
