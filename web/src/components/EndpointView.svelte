@@ -65,6 +65,11 @@
   let tunnelError = $state<string | null>(null)
   let showEnableTunnelModal = $state(false)
   let showDisableTunnelModal = $state(false)
+  // Which Cloudflare tunnel the gateway was started with, and whether one is
+  // configured at all. The mode comes from the environment (CF_TUNNEL_MODE),
+  // so the dashboard can explain what to set instead of failing opaquely.
+  let tunnelMode = $state<'off' | 'quick' | 'named'>('off')
+  let tunnelConfigured = $state(false)
 
   // Tailscale state
   let tailscaleEnabled = $state(false)
@@ -167,6 +172,8 @@
       tunnelRunning = !!status.tunnel.running
       tunnelUrl = status.tunnel.tunnelUrl || ''
       publicUrl = status.tunnel.publicUrl || ''
+      if (status.tunnel.mode) tunnelMode = status.tunnel.mode
+      tunnelConfigured = status.tunnel.configured ?? false
     }
     if (status.tailscale) {
       tailscaleEnabled = !!(status.tailscale.settingsEnabled ?? status.tailscale.enabled)
@@ -248,6 +255,17 @@
       : 'Change the default dashboard password before activating the tunnel.'
   )
 
+  // The gateway is started with a tunnel mode (CF_TUNNEL_MODE). "off" means no
+  // Cloudflare tunnel is configured, so the Enable button would have nothing to
+  // start — the operator has to set the environment and restart.
+  let tunnelModeLabel = $derived(
+    tunnelMode === 'named' ? 'Named Tunnel' : tunnelMode === 'quick' ? 'Quick Tunnel' : 'Tunnel',
+  )
+  let tunnelNotConfigured = $derived(!tunnelConfigured)
+  let tunnelNotConfiguredHint = $derived(
+    'No Cloudflare tunnel is configured. Set CF_TUNNEL_MODE=named (with CF_TUNNEL_CONFIG and CF_TUNNEL_CREDENTIALS) or CF_TUNNEL_MODE=quick, then restart the gateway.',
+  )
+
   // Start Cloudflare Tunnel
   async function startTunnel() {
     showEnableTunnelModal = false
@@ -256,7 +274,7 @@
     tunnelError = null
 
     try {
-      const res = await api.enableTunnel()
+      const res = await api.enableCloudflareTunnel()
       if (res.error) {
         tunnelError = res.error
         return
@@ -280,7 +298,7 @@
     showDisableTunnelModal = false
     isTunnelLoading = true
     try {
-      await api.disableTunnel()
+      await api.disableCloudflareTunnel()
       tunnelEnabled = false
       tunnelRunning = false
       tunnelUrl = ''
@@ -429,14 +447,14 @@
         </button>
       </div>
 
-      <!-- Tunnel (Cloudflare Quick Tunnel) -->
+      <!-- Tunnel (Cloudflare Quick or Named Tunnel) -->
       <div class="flex items-center gap-2">
         <span
           class="text-xs font-mono px-2 py-1 rounded shrink-0 min-w-[90px] text-center font-semibold border transition-colors {tunnelRunning && tunnelUrl
             ? 'bg-brand-500/15 text-brand-500 border-brand-500/30'
             : 'bg-surface-2 text-text-muted border-border'}"
         >
-          Tunnel
+          {tunnelModeLabel}
         </span>
 
         {#if tunnelEnabled && !isTunnelLoading && tunnelReachable}
@@ -507,24 +525,31 @@
           </button>
         {:else}
           <div class="flex-1 flex items-center px-3 py-2 text-sm text-text-muted font-mono bg-bg border border-border rounded-lg">
-            <span>Not connected</span>
+            <span>{tunnelNotConfigured ? 'Not configured' : 'Not connected'}</span>
           </div>
-          <button
-            type="button"
-            onclick={() => {
-              if (isLoginUnsafe) {
-                tunnelError = `Security required: ${unsafeReason}`
-              } else if (!requireApiKey) {
-                tunnelError = 'Security required: Enable "Require API key" before activating the tunnel.'
-              } else {
-                showEnableTunnelModal = true
-              }
-            }}
-            class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white font-semibold text-xs transition cursor-pointer shadow-sm"
-          >
-            <CloudUpload class="w-3.5 h-3.5" />
-            <span>Enable</span>
-          </button>
+          {#if tunnelNotConfigured}
+            <div class="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-amber-500/25 bg-amber-500/5 text-[11px] text-amber-600 dark:text-amber-400 max-w-[280px]">
+              <AlertCircle class="w-3.5 h-3.5 shrink-0" />
+              <span class="truncate" title={tunnelNotConfiguredHint}>{tunnelNotConfiguredHint}</span>
+            </div>
+          {:else}
+            <button
+              type="button"
+              onclick={() => {
+                if (isLoginUnsafe) {
+                  tunnelError = `Security required: ${unsafeReason}`
+                } else if (!requireApiKey) {
+                  tunnelError = 'Security required: Enable "Require API key" before activating the tunnel.'
+                } else {
+                  showEnableTunnelModal = true
+                }
+              }}
+              class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white font-semibold text-xs transition cursor-pointer shadow-sm"
+            >
+              <CloudUpload class="w-3.5 h-3.5" />
+              <span>Enable</span>
+            </button>
+          {/if}
         {/if}
       </div>
 
@@ -854,9 +879,13 @@
       <div class="bg-surface-2 border border-border rounded-xl p-4 flex items-start gap-3">
         <CloudUpload class="w-5 h-5 text-brand-500 shrink-0 mt-0.5" />
         <div class="space-y-1 text-xs">
-          <p class="font-bold text-text-main">Cloudflare Quick Tunnel</p>
+          <p class="font-bold text-text-main">{tunnelModeLabel}</p>
           <p class="text-text-muted leading-relaxed">
-            Expose your local 9router-go to the internet. No port forwarding, no static IP needed. Share endpoint URL with your team or use it in Cursor, Cline, and other AI tools from anywhere.
+            {#if tunnelMode === 'named'}
+              Expose Blackhand on your own hostname through a named Cloudflare Tunnel. The credentials and the tunnel configuration come from the environment, so the hostname stays the same across restarts.
+            {:else}
+              Expose your local Blackhand to the internet. No port forwarding, no static IP needed. Share endpoint URL with your team or use it in Cursor, Cline, and other AI tools from anywhere.
+            {/if}
           </p>
         </div>
       </div>
@@ -961,7 +990,7 @@
       {:else}
         <div class="space-y-3">
           <p class="text-sm text-text-muted leading-relaxed">
-            Tailscale is installed. Click Connect to expose your 9router-go via Tailscale Funnel.
+            Tailscale is installed. Click Connect to expose your Blackhand via Tailscale Funnel.
           </p>
         </div>
       {/if}

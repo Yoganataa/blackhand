@@ -294,6 +294,10 @@ export interface TunnelStatusResponse {
     tunnelUrl?: string
     publicUrl?: string
     running?: boolean
+    /** 'off' | 'quick' | 'named' — which Cloudflare tunnel mode the gateway was started with. */
+    mode?: 'off' | 'quick' | 'named'
+    /** False when the gateway has no Cloudflare tunnel configured at all. */
+    configured?: boolean
   }
   tailscale?: {
     enabled?: boolean
@@ -1763,6 +1767,18 @@ export const api = {
     }),
   disableTunnel: () =>
     request<{ success?: boolean; error?: string }>('/api/tunnel/disable', {
+      method: 'POST',
+    }),
+  // Named/quick Cloudflare Tunnel, supervised by the gateway itself. The
+  // tunnel mode comes from the environment (CF_TUNNEL_MODE), so the dashboard
+  // only starts and stops it — it never creates the credentials.
+  enableCloudflareTunnel: () =>
+    request<{ success?: boolean; tunnelUrl?: string; publicUrl?: string; running?: boolean; pid?: number; error?: string }>(
+      '/api/tunnel/cloudflare-enable',
+      { method: 'POST' },
+    ),
+  disableCloudflareTunnel: () =>
+    request<{ success?: boolean; error?: string }>('/api/tunnel/cloudflare-disable', {
       method: 'POST',
     }),
   checkTailscale: () =>

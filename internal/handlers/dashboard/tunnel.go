@@ -16,6 +16,7 @@ import (
 
 	"9router/proxy/internal/config"
 	"9router/proxy/internal/handlerutil"
+	"9router/proxy/internal/tunnel/cloudflared"
 )
 
 var unixTailscaleCandidates = []string{
@@ -120,6 +121,18 @@ func (h *DashboardHandler) HandleTunnelStatus(w http.ResponseWriter, r *http.Req
 	tunnelEnabled, _ := raw["tunnelEnabled"].(bool)
 	tunnelURL, _ := raw["tunnelUrl"].(string)
 
+	// The supervisor is the source of truth for a Cloudflare tunnel this
+	// gateway started itself. Settings alone cannot tell "running" from
+	// "was enabled before the process died", so the reported state follows the
+	// live process. A tunnel that was enabled by other means (mode off) keeps
+	// the historical settings-derived answer.
+	sup := h.tunnelSupervisor()
+	supStatus := sup.Status()
+	tunnelRunning := supStatus.Running
+	if supStatus.Mode == cloudflared.ModeOff {
+		tunnelRunning = tunnelEnabled && tunnelURL != ""
+	}
+
 	tailscaleEnabled, _ := raw["tailscaleEnabled"].(bool)
 	tailscaleURL, _ := raw["tailscaleUrl"].(string)
 
@@ -146,7 +159,14 @@ func (h *DashboardHandler) HandleTunnelStatus(w http.ResponseWriter, r *http.Req
 			"tunnelUrl":       tunnelURL,
 			"shortId":         "",
 			"publicUrl":       tunnelURL,
-			"running":         tunnelEnabled && tunnelURL != "",
+			"running":         tunnelRunning,
+			// mode/configured let the dashboard tell "not configured yet" from
+			// "configured but stopped". The pid and the last error stay out of
+			// this response on purpose: the route is public (upstream parity),
+			// and a process id plus a filesystem path are not something an
+			// unauthenticated caller needs.
+			"mode":       supStatus.Mode,
+			"configured": supStatus.Mode != cloudflared.ModeOff,
 		},
 		"tailscale": map[string]any{
 			"enabled":         tailscaleEnabled,
@@ -162,13 +182,31 @@ func (h *DashboardHandler) HandleTunnelStatus(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// HandleTunnelEnable handles POST /api/tunnel/enable.
+// tunnelSupervisor returns the process-wide Cloudflare tunnel supervisor. It is
+// a singleton on purpose: one gateway supervises one cloudflared, so a
+// per-handler copy would let two handlers disagree about whether the tunnel is
+// up, and would start a second cloudflared when both were asked to enable it.
+func (h *DashboardHandler) tunnelSupervisor() *cloudflared.Supervisor {
+	return cloudflared.Shared()
+}
+
+// HandleTunnelEnable keeps the upstream route working: it delegates to the cloudflared
+// supervisor when a named/quick tunnel is configured, and otherwise reports that no
+// tunnel is configured so the caller knows which environment variables to set.
 func (h *DashboardHandler) HandleTunnelEnable(w http.ResponseWriter, r *http.Request) {
-	writePlainError(w, http.StatusBadRequest, "Cloudflare Tunnel service is not yet supported in 9router-go. Use an external reverse proxy (e.g. ngrok, cloudflared, or caddy) pointing to http://127.0.0.1:20130")
+	if h.tunnelSupervisor().Status().Mode == cloudflared.ModeOff {
+		writePlainError(w, http.StatusBadRequest, "No Cloudflare tunnel is configured. Set CF_TUNNEL_MODE=named (with CF_TUNNEL_CONFIG / CF_TUNNEL_CREDENTIALS) or CF_TUNNEL_MODE=quick and restart the gateway.")
+		return
+	}
+	h.HandleCloudflareTunnelEnable(w, r)
 }
 
 // HandleTunnelDisable handles POST /api/tunnel/disable.
 func (h *DashboardHandler) HandleTunnelDisable(w http.ResponseWriter, r *http.Request) {
+	// A supervised cloudflared keeps running after the settings row is
+	// cleared, so the process has to be stopped here too. Otherwise "Disable"
+	// left the tunnel serving traffic with no trace in the settings.
+	h.tunnelSupervisor().Stop()
 	_ = h.Repo.UpdateSettingsRaw(map[string]any{
 		"tunnelEnabled": false,
 	})

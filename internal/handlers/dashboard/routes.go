@@ -161,5 +161,10 @@ func RegisterRoutes(r chi.Router, h *DashboardHandler) {
 
 		// Compression Analytics
 		r.Get("/analytics/compression", h.HandleGetCompressionAnalytics)
+
+		// Cloudflare Tunnel (supervised by the gateway). Registered at the end
+		// of the table so an upstream edit to the route list above merges
+		// without touching these lines.
+		RegisterCloudflareTunnelRoutes(r, h, "")
 	})
 }

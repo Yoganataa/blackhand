@@ -339,6 +339,11 @@ func SetupDashboardRoutes(r chi.Router, repo *db.Repo, chatH *chat.ChatHandler) 
 	// Mount OAuth routes under dashboard auth so web dashboard can initiate and exchange tokens
 	oauthH := oauth.NewOAuthHandler(repo)
 	mountOAuthRoutes(r, oauthH)
+
+	// Cloudflare Tunnel (supervised by the gateway). Registered at the end of
+	// the function so an upstream edit to the route list above merges without
+	// touching these lines.
+	dashboard.RegisterCloudflareTunnelRoutes(r, dashH, "/api")
 }
 
 // SetupConsoleLogRoutes mounts operational log APIs behind a full dashboard
