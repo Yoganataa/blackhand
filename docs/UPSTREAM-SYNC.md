@@ -76,6 +76,10 @@ only renamed in a handful of places.
 
 ## Running on Google Colab
 
+Open `colab/Blackhand.ipynb` in Colab. It asks for three things — a dashboard
+password, your tunnel `config.yml`, and your tunnel credentials JSON — and
+then starts the gateway and prints the endpoint to use.
+
 Colab has no Go toolchain and no Bun, and the gateway binary embeds the built
 web app, so the runtime cannot compile the gateway itself. The bootstrap
 resolves a binary in this order:
@@ -88,7 +92,8 @@ resolves a binary in this order:
    release to exist.
 
 Steps 1-3 are the fast paths. A fork that has not cut a release yet pays a
-full build on every fresh runtime, so cutting one is worth it.
+full build on every fresh runtime, so cutting one is worth it. The bootstrap
+also installs `cloudflared`, which Colab does not ship.
 
 ```python
 import os
@@ -110,6 +115,10 @@ The data directory is ephemeral, so the environment is the only durable
 state: `ROUTER_API_KEY` and `ROUTER_SETTINGS_JSON` reproduce the API key and
 the settings on every fresh runtime, and the tunnel material is either
 written inline into the environment or read from a file in `/content`.
+
+The bootstrap writes `status.json` next to the data directory, with the
+tunnel URL and the endpoint, so a notebook can read the result without
+parsing the log.
 
 `ROUTER_TUNNEL_DASHBOARD_ACCESS` is set to true by the bootstrap whenever a
 tunnel is configured. The tunnel gate refuses the dashboard on the tunnel's

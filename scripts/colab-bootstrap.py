@@ -137,6 +137,34 @@ def go_version() -> str:
     return GO_VERSION
 
 
+def ensure_cloudflared() -> None:
+    """Put a cloudflared binary on PATH, downloading one if the runtime has none.
+
+    The tunnel supervisor runs the real cloudflared, and Colab does not ship
+    it. Without this the tunnel cannot start at all, and the failure looks
+    like a configuration problem rather than a missing binary.
+    """
+    if os.environ.get("CF_TUNNEL_MODE", "off") == "off":
+        return
+    if os.environ.get("CF_TUNNEL_BIN"):
+        return
+    existing = shutil.which("cloudflared")
+    if existing:
+        os.environ["CF_TUNNEL_BIN"] = existing
+        return
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    target = CACHE_DIR / "cloudflared"
+    url = os.environ.get(
+        "BLACKHAND_CLOUDFLARED_URL",
+        "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
+    )
+    if not download(url, target):
+        sys.exit("[bootstrap] ERROR: could not download cloudflared; set CF_TUNNEL_BIN to a binary you placed there")
+    os.environ["CF_TUNNEL_BIN"] = str(target)
+    log(f"installed cloudflared at {target}")
+
+
 def binary_path() -> Path:
     """The path the gateway binary is expected at, once resolved."""
     override = os.environ.get("BLACKHAND_BINARY")
@@ -325,6 +353,20 @@ def enable_tunnel(cookie: str) -> str:
     return body.get("tunnelUrl", "")
 
 
+def write_status(tunnel_url: str) -> None:
+    """Record what the runtime ended up with, so a notebook can read the
+    result without parsing the log."""
+    status = {
+        "tunnelUrl": tunnel_url,
+        "endpoint": (tunnel_url.rstrip("/") + "/v1") if tunnel_url else "",
+        "port": PORT,
+        "dataDir": DATA_DIR,
+        "pidFile": str(PID_FILE),
+    }
+    (LOG_DIR / "status.json").write_text(json.dumps(status, indent=2))
+    log(f"wrote {LOG_DIR / 'status.json'}")
+
+
 def main() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -346,6 +388,7 @@ def main() -> None:
 
     stop_previous()
     materialize_tunnel_files()
+    ensure_cloudflared()
     binary = resolve_binary()
 
     stdout = open(LOG_DIR / "stdout.log", "w")
@@ -373,6 +416,7 @@ def main() -> None:
             cookie = dashboard_login(os.environ.get("INITIAL_PASSWORD", "colab"))
             url = enable_tunnel(cookie)
             log(f"tunnel URL: {url}")
+            write_status(url)
         except Exception as error:
             log(f"could not start the tunnel: {error}")
             log((LOG_DIR / "stderr.log").read_text()[-1000:])
