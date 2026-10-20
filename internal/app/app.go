@@ -16,6 +16,10 @@ import (
 var AppModule = fx.Options(
 	ConfigModule,
 	DatabaseModule,
+	// Environment-driven configuration is applied here, between the database
+	// and the server: it writes the settings row, and the token-saver
+	// configuration built for the server has to read that row afterwards.
+	BootInjectModule,
 	HandlersModule,
 	ServerModule,
 )
