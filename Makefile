@@ -1,5 +1,5 @@
 BINARY_SUFFIX := $(if $(findstring Windows_NT,$(OS)),.exe,)
-BINARY_NAME := 9router-go$(BINARY_SUFFIX)
+BINARY_NAME := blackhand$(BINARY_SUFFIX)
 # A bare `make` builds the binary and stops there — it never runs the server.
 # `run`/`dev` are explicit, separate goals on purpose.
 .DEFAULT_GOAL := build
@@ -243,7 +243,7 @@ clean:
 
 ## help — show targets
 help:
-	@echo "9router-go — Makefile targets:"
+	@echo "Blackhand — Makefile targets:"
 	@grep -E '^## ' Makefile | sed 's/## /  make /' | sed 's/ — /  /'
 	@echo ""
 	@echo "Options:"
