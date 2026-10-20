@@ -218,7 +218,13 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	s.stopped = false
 	s.mu.Unlock()
 
-	runCtx, cancel := context.WithCancel(ctx)
+	// The tunnel outlives the request that started it. Deriving the process
+	// context from the request context would make net/http cancel it the
+	// moment the handler returns, killing the tunnel the operator just
+	// enabled; it only survived because the supervisor relaunched it.
+	// WithoutCancel keeps the request's values and drops its cancellation,
+	// and the supervisor's own Stop is what ends the process.
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	cmd := exec.CommandContext(runCtx, s.cfg.Bin, args...)
 	s.mu.Lock()
 	s.cancel = cancel

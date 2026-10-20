@@ -159,6 +159,42 @@ func TestSupervisorQuickModeRequiresOrigin(t *testing.T) {
 	}
 }
 
+// TestSupervisorProcessOutlivesItsContext pins that the tunnel is not tied to
+// the lifetime of whatever context started it.
+//
+// The dashboard starts the tunnel from an HTTP handler, so the context is the
+// request's. net/http cancels that context the moment the handler returns, so
+// a process bound to it was killed as soon as the operator enabled the tunnel
+// - the enable response reported a pid that was already gone.
+func TestSupervisorProcessOutlivesItsContext(t *testing.T) {
+	dir := t.TempDir()
+	bin := writeFakeCloudflared(t, dir, []string{"Registered tunnel connection"})
+	sup := New(Config{
+		Mode:       ModeNamed,
+		Bin:        bin,
+		ConfigYAML: "ingress:\n  - hostname: blackhand.example.com\n    service: http://localhost\n",
+		WorkDir:    dir,
+	})
+	defer sup.Stop()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := sup.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	pid := sup.Status().PID
+	if pid <= 0 {
+		t.Fatal("no pid recorded")
+	}
+
+	// The context that started the tunnel goes away, the way a request does.
+	cancel()
+	time.Sleep(500 * time.Millisecond)
+
+	if !sup.Status().Running {
+		t.Fatal("the tunnel must outlive the context that started it")
+	}
+}
+
 // writeCountingFakeCloudflared writes a fake that appends a line to counter
 // on every start, so a test can tell how many times the supervisor actually
 // launched it. When exitAfter is non-empty the fake exits right after

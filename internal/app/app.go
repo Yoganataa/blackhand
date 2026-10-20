@@ -22,6 +22,10 @@ var AppModule = fx.Options(
 	BootInjectModule,
 	HandlersModule,
 	ServerModule,
+	// The tunnel module registers the shutdown hook that stops the
+	// supervised cloudflared, so the child process does not outlive the
+	// gateway that started it.
+	TunnelModule,
 )
 
 // DefaultFxLogger returns the logging configuration for Fx.

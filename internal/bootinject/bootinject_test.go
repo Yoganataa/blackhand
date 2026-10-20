@@ -96,6 +96,30 @@ func TestApplyEnvSugarVars(t *testing.T) {
 	}
 }
 
+// TestApplyTunnelDashboardAccess pins the setting that opens the dashboard on
+// a tunnel hostname.
+//
+// The tunnel gate refuses a login or a dashboard page that arrives through the
+// tunnel's own hostname unless this setting is on. A deployment whose only
+// way in is the tunnel - a Colab notebook behind a named tunnel - cannot
+// reach its dashboard at all without it, and the symptom is a 403 that looks
+// like a wrong password.
+func TestApplyTunnelDashboardAccess(t *testing.T) {
+	t.Setenv("NINEROUTER_API_KEY", "")
+	t.Setenv("ROUTER_TUNNEL_DASHBOARD_ACCESS", "true")
+
+	repo := newTestRepo(t)
+	Apply(repo)
+
+	settings, err := repo.GetSettingsRaw()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings["tunnelDashboardAccess"] != true {
+		t.Fatalf("tunnelDashboardAccess = %v, want true", settings["tunnelDashboardAccess"])
+	}
+}
+
 func TestApplyRejectsInvalidSettingsJSON(t *testing.T) {
 	t.Setenv("NINEROUTER_API_KEY", "")
 	t.Setenv("ROUTER_SETTINGS_JSON", "{not valid json")

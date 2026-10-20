@@ -179,6 +179,11 @@ func applySettings(repo *db.Repo) {
 	setBool("ROUTER_ADHD_ENABLED", "adhdEnabled")
 	setBool("ROUTER_HEADROOM_ENABLED", "headroomEnabled")
 	setBool("ROUTER_INJECTION_GUARD_ENABLED", "injectionGuardEnabled")
+	// The tunnel gate blocks the dashboard on a tunnel hostname unless dashboard
+	// access is enabled there, and the gate reads this setting per request. A
+	// deployment whose only way in is the tunnel (a Colab notebook behind a
+	// named tunnel) therefore cannot reach the dashboard at all without it.
+	setBool("ROUTER_TUNNEL_DASHBOARD_ACCESS", "tunnelDashboardAccess")
 	setString("ROUTER_CAVEMAN_LEVEL", "cavemanLevel")
 	setString("ROUTER_PONYTAIL_LEVEL", "ponytailLevel")
 	setString("ROUTER_ADHD_LEVEL", "adhdLevel")
